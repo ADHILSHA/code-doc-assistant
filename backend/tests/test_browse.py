@@ -79,3 +79,54 @@ def test_get_file_slice_rejects_absolute_path(mini_repo_path: Path, tmp_path: Pa
     client, repo_id = _index_mini_repo(mini_repo_path, tmp_path)
     resp = client.get(f"/api/repos/{repo_id}/file", params={"path": "/etc/passwd"})
     assert resp.status_code == 400
+
+
+# --- GET /repos/{id}/endpoints, GET /repos/{id}/dependencies (SPEC.md §6 Phase 2 task 5) ---
+
+
+def test_get_endpoints_matches_mini_repo_ground_truth(mini_repo_path: Path, tmp_path: Path):
+    client, repo_id = _index_mini_repo(mini_repo_path, tmp_path)
+
+    resp = client.get(f"/api/repos/{repo_id}/endpoints")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 9  # 3 fastapi + 3 flask + 3 express, per the fixtures' ground truth
+    frameworks = {e["framework"] for e in body}
+    assert frameworks == {"fastapi", "flask", "express"}
+    health = next(e for e in body if e["route"] == "/health" and e["framework"] == "express")
+    assert health["method"] == "GET"
+    assert health["auth_hint"] is None
+
+
+def test_get_dependencies_matches_mini_repo_manifests_exactly(mini_repo_path: Path, tmp_path: Path):
+    client, repo_id = _index_mini_repo(mini_repo_path, tmp_path)
+
+    resp = client.get(f"/api/repos/{repo_id}/dependencies")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 9  # 4 npm (package.json) + 5 pypi (pyproject.toml)
+    by_name = {d["name"]: d for d in body}
+    assert by_name["express"]["version_spec"] == "^4.19.2"
+    assert by_name["fastapi"]["ecosystem"] == "pypi"
+
+
+def test_get_endpoints_unknown_repo_404(tmp_path: Path):
+    client, _settings = _make_client(tmp_path)
+    resp = client.get("/api/repos/does-not-exist/endpoints")
+    assert resp.status_code == 404
+
+
+def test_get_dependencies_unknown_repo_404(tmp_path: Path):
+    client, _settings = _make_client(tmp_path)
+    resp = client.get("/api/repos/does-not-exist/dependencies")
+    assert resp.status_code == 404
+
+
+def test_get_endpoints_repo_not_ready_409(tmp_path: Path):
+    client, _settings = _make_client(tmp_path)
+    # A local path that doesn't exist keeps the job (and repo) in a
+    # non-ready state instead of ever reaching "ready".
+    resp = client.post("/api/repos", json={"source": str(tmp_path / "does-not-exist")})
+    repo_id = resp.json()["repo_id"]
+    resp = client.get(f"/api/repos/{repo_id}/endpoints")
+    assert resp.status_code in (404, 409)

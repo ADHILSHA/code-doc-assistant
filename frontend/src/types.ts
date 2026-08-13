@@ -13,6 +13,9 @@ export interface RepoStats {
   languages: string[];
   chunking?: Record<string, number>; // e.g. {"ast": 40, "markdown": 3, "naive": 2}
   fallback_languages?: string[]; // languages that fell back to the naive splitter
+  symbols?: number; // Phase 2: rows written to `symbols`
+  endpoints?: number; // Phase 2: rows written to `endpoints`
+  dependencies?: number; // Phase 2: rows written to `dependencies`
 }
 
 export interface Repo {
@@ -63,6 +66,26 @@ export interface FileSlice {
   start_line: number;
   end_line: number;
   lines: string[];
+}
+
+// --- GET /repos/{id}/endpoints, GET /repos/{id}/dependencies (SPEC.md §6 Phase 2) ---
+
+export interface Endpoint {
+  method: string | null; // null = handles any method (e.g. Express `.all()`)
+  route: string;
+  framework: string | null;
+  handler_symbol: string | null;
+  file_path: string | null;
+  line: number | null;
+  auth_hint: string | null;
+}
+
+export interface Dependency {
+  ecosystem: string | null;
+  name: string;
+  version_spec: string | null;
+  kind: string | null;
+  manifest_path: string;
 }
 
 export type ChatRole = "user" | "assistant";

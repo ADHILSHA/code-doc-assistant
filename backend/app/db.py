@@ -115,6 +115,71 @@ REPO_MIGRATIONS: list[str] = [
       tokenize='unicode61 remove_diacritics 0'
     );
     """,
+    # v3 (Phase 2) — symbols, call/import graph, dependencies, endpoints.
+    """
+    CREATE TABLE symbols (
+      -- AUTOINCREMENT for the same reason as chunks.id (see v1 above):
+      -- symbol_refs.resolved_symbol_id points at these ids, and
+      -- parsing/symbols.py deletes-and-reinserts a file's symbols on
+      -- reindex.
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      file_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      signature TEXT,
+      docstring TEXT,
+      parent_symbol TEXT,
+      start_line INTEGER,
+      end_line INTEGER,
+      is_exported INTEGER DEFAULT 1
+    );
+    CREATE INDEX idx_symbols_name ON symbols(name);
+    CREATE INDEX idx_symbols_file ON symbols(file_id);
+
+    CREATE TABLE symbol_refs (
+      id INTEGER PRIMARY KEY,
+      from_file_id INTEGER,
+      from_symbol_id INTEGER,
+      target_name TEXT NOT NULL,
+      resolved_symbol_id INTEGER,
+      line INTEGER
+    );
+    CREATE INDEX idx_refs_target ON symbol_refs(target_name);
+    CREATE INDEX idx_refs_file ON symbol_refs(from_file_id);
+
+    CREATE TABLE import_edges (
+      id INTEGER PRIMARY KEY,
+      from_file_id INTEGER NOT NULL,
+      to_file_id INTEGER,
+      module_text TEXT NOT NULL,
+      is_external INTEGER,
+      line INTEGER
+    );
+    CREATE INDEX idx_import_edges_file ON import_edges(from_file_id);
+
+    CREATE TABLE dependencies (
+      id INTEGER PRIMARY KEY,
+      ecosystem TEXT,
+      name TEXT NOT NULL,
+      version_spec TEXT,
+      kind TEXT,
+      manifest_path TEXT NOT NULL,
+      used_in_files_json TEXT
+    );
+
+    CREATE TABLE endpoints (
+      id INTEGER PRIMARY KEY,
+      method TEXT,
+      route TEXT NOT NULL,
+      framework TEXT,
+      handler_symbol TEXT,
+      file_id INTEGER,
+      line INTEGER,
+      auth_hint TEXT,
+      params_json TEXT,
+      source TEXT
+    );
+    """,
 ]
 
 

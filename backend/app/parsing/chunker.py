@@ -119,7 +119,7 @@ LANGUAGE_SPECS: dict[str, LanguageSpec] = {
     ),
 }
 
-_CONTAINER_KIND = {
+CONTAINER_KIND = {
     "class_definition": "class",
     "class_declaration": "class",
     "class": "class",
@@ -131,7 +131,7 @@ _CONTAINER_KIND = {
     "module": "module",
 }
 
-_DEFINITION_KIND = {
+DEFINITION_KIND = {
     "function_definition": "function",
     "function_declaration": "function",
     "function_item": "function",
@@ -215,7 +215,7 @@ def _line_number(source: bytes, byte_offset: int) -> int:
     return source.count(b"\n", 0, byte_offset) + 1
 
 
-def _extract_name(node) -> str | None:
+def extract_name(node) -> str | None:
     name_node = node.child_by_field_name("name")
     if name_node is not None:
         return name_node.text.decode("utf-8", errors="replace")
@@ -294,7 +294,7 @@ def _split_oversized(node, source: bytes, max_tokens: int, overlap_statements: i
     return windows
 
 
-def _unwrap(node, wrapper_types: frozenset[str]):
+def unwrap_decorator(node, wrapper_types: frozenset[str]):
     """For a `child` that's a decorator-style wrapper (Python's
     `decorated_definition`), returns (span_node, inner_node): `span_node`'s
     byte range includes the decorator and should be used for the chunk's
@@ -319,8 +319,8 @@ def _emit_definition(
     max_tokens: int,
     overlap_statements: int,
 ) -> None:
-    name = _extract_name(inner_node)
-    kind = _DEFINITION_KIND.get(inner_node.type, "function")
+    name = extract_name(inner_node)
+    kind = DEFINITION_KIND.get(inner_node.type, "function")
     token_estimate = (span_node.end_byte - span_node.start_byte) // 4
 
     if token_estimate <= max_tokens:
@@ -351,7 +351,7 @@ def _first_definition_start(node, definition_types: frozenset[str], wrapper_type
     for child in node.children:
         if not child.is_named:
             continue
-        span_node, inner_node = _unwrap(child, wrapper_types)
+        span_node, inner_node = unwrap_decorator(child, wrapper_types)
         if inner_node.type in definition_types:
             return span_node.start_byte
         found = _first_definition_start(child, definition_types, wrapper_types)
@@ -395,7 +395,7 @@ def _emit_container_shell(
             end_line,
             text,
             symbol_name=name,
-            symbol_kind=_CONTAINER_KIND.get(node.type, "class"),
+            symbol_kind=CONTAINER_KIND.get(node.type, "class"),
             parent_symbol=parent_symbol,
         )
     )
@@ -407,13 +407,13 @@ def _walk(
     for child in node.children:
         if not child.is_named:
             continue
-        span_node, inner_node = _unwrap(child, spec.wrapper_types)
+        span_node, inner_node = unwrap_decorator(child, spec.wrapper_types)
         if inner_node.type in spec.definition_types:
             _emit_definition(
                 inner_node, span_node, chunks, source, parent_symbol, max_tokens=max_tokens, overlap_statements=overlap_statements
             )
         elif inner_node.type in spec.container_types:
-            name = _extract_name(inner_node)
+            name = extract_name(inner_node)
             _emit_container_shell(inner_node, span_node, chunks, source, parent_symbol, spec, name)
             # Recurse into the real container node's children, not the
             # decorator wrapper (which has no children of its own besides
@@ -465,7 +465,7 @@ def _chunk_ast(text: str, language: str, *, max_tokens: int, overlap_statements:
     for c in tree.root_node.children:
         if not c.is_named:
             continue
-        span_node, inner_node = _unwrap(c, spec.wrapper_types)
+        span_node, inner_node = unwrap_decorator(c, spec.wrapper_types)
         if inner_node.type in spec.definition_types or inner_node.type in spec.container_types:
             _emit_module_chunk(source, gap_start, span_node.start_byte, chunks)
             gap_start = span_node.end_byte

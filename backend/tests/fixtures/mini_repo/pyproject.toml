@@ -1,0 +1,15 @@
+[project]
+name = "mini_repo"
+version = "0.1.0"
+description = "Fixture manifest — known ground truth for dependency extraction tests."
+dependencies = [
+    "fastapi>=0.115",
+    "flask>=3.0",
+    "requests>=2.32",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.7",
+]

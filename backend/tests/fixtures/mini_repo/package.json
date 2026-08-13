@@ -1,0 +1,13 @@
+{
+  "name": "mini_repo",
+  "version": "1.0.0",
+  "description": "Fixture manifest — known ground truth for dependency extraction tests.",
+  "dependencies": {
+    "express": "^4.19.2",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  }
+}

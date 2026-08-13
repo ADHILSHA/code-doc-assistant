@@ -75,6 +75,27 @@ class FileSliceResponse(BaseModel):
     lines: list[str]
 
 
+# --- /api/repos/{id}/endpoints, /api/repos/{id}/dependencies (SPEC.md §6 Phase 2) ---
+
+
+class EndpointOut(BaseModel):
+    method: str | None = None
+    route: str
+    framework: str | None = None
+    handler_symbol: str | None = None
+    file_path: str | None = None
+    line: int | None = None
+    auth_hint: str | None = None
+
+
+class DependencyOut(BaseModel):
+    ecosystem: str | None = None
+    name: str
+    version_spec: str | None = None
+    kind: str | None = None
+    manifest_path: str
+
+
 # --- internal: retrieval / generation ---
 
 

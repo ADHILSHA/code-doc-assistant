@@ -2,6 +2,13 @@
 Phase 1 task 5). Reads directly from the repo's cloned/local working tree
 on disk (not from the chunk index), path-jailed to the repo root.
 
+GET /repos/{id}/endpoints and GET /repos/{id}/dependencies (SPEC.md §6
+Phase 2 task 5) instead read straight from the per-repo DB's `endpoints`/
+`dependencies` tables via retrieval/structured.py — the same structured
+query helpers generation/answer.py uses for the `endpoints`/`dependencies`
+chat routes, so the dedicated frontend tabs (EndpointsTable/DependencyList)
+and the chat answer are always looking at identical data.
+
 No business logic here beyond request validation and error mapping — the
 path-jailing itself lives in ingest/safe_path.py (SPEC.md §7.6).
 """
@@ -13,10 +20,15 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.api.query import embedding_provider_dependency
 from app.api.repos import registry_connection_dependency
+from app.config import Settings, get_settings
+from app.db import get_repo_connection
 from app.ingest.safe_path import PathTraversalError, safe_join
-from app.models import FileSliceResponse
+from app.models import DependencyOut, EndpointOut, FileSliceResponse
 from app.parsing.languages import detect_language
+from app.providers.embeddings import EmbeddingProvider
+from app.retrieval.structured import list_dependencies, list_endpoints
 
 router = APIRouter(tags=["browse"])
 
@@ -66,3 +78,50 @@ def get_file_slice(
         end_line=end_line,
         lines=all_lines[start_line - 1 : end_line],
     )
+
+
+def _open_repo_conn(
+    repo_id: str,
+    registry_conn: sqlite3.Connection,
+    settings: Settings,
+    embedding_provider: EmbeddingProvider,
+) -> sqlite3.Connection:
+    row = registry_conn.execute("SELECT status FROM repos WHERE id = ?", (repo_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "repo not found")
+    if row["status"] != "ready":
+        raise HTTPException(409, f"repo is not ready (status={row['status']})")
+    try:
+        return get_repo_connection(repo_id, embedding_provider.dim, settings)
+    except RuntimeError as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
+@router.get("/repos/{repo_id}/endpoints", response_model=list[EndpointOut])
+def get_endpoints(
+    repo_id: str,
+    registry_conn: sqlite3.Connection = Depends(registry_connection_dependency),
+    settings: Settings = Depends(get_settings),
+    embedding_provider: EmbeddingProvider = Depends(embedding_provider_dependency),
+) -> list[EndpointOut]:
+    repo_conn = _open_repo_conn(repo_id, registry_conn, settings, embedding_provider)
+    try:
+        rows = list_endpoints(repo_conn)
+    finally:
+        repo_conn.close()
+    return [EndpointOut.model_validate(r, from_attributes=True) for r in rows]
+
+
+@router.get("/repos/{repo_id}/dependencies", response_model=list[DependencyOut])
+def get_dependencies(
+    repo_id: str,
+    registry_conn: sqlite3.Connection = Depends(registry_connection_dependency),
+    settings: Settings = Depends(get_settings),
+    embedding_provider: EmbeddingProvider = Depends(embedding_provider_dependency),
+) -> list[DependencyOut]:
+    repo_conn = _open_repo_conn(repo_id, registry_conn, settings, embedding_provider)
+    try:
+        rows = list_dependencies(repo_conn)
+    finally:
+        repo_conn.close()
+    return [DependencyOut.model_validate(r, from_attributes=True) for r in rows]

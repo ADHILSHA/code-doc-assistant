@@ -171,3 +171,13 @@ def get_llm_provider(settings: Settings) -> LLMProvider:
     if not settings.anthropic_api_key:
         raise RuntimeError("ANTHROPIC_API_KEY is required to run the synthesis LLM")
     return AnthropicLLMProvider(settings.anthropic_api_key, settings.synthesis_model)
+
+
+def get_summarization_llm_provider(settings: Settings) -> LLMProvider:
+    """Same adapter, cheap model (`settings.summarization_model`) — used for
+    high-volume, low-stakes calls like query routing (retrieval/router.py)
+    and (Phase 3) repo/file summarization, where the full synthesis model
+    would be needlessly expensive."""
+    if not settings.anthropic_api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY is required to run the summarization LLM")
+    return AnthropicLLMProvider(settings.anthropic_api_key, settings.summarization_model)

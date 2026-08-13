@@ -2,6 +2,8 @@ import { useState } from "react";
 import { getRepo } from "./api/client";
 import { ChatPanel } from "./components/ChatPanel";
 import { CodeViewer } from "./components/CodeViewer";
+import { DependencyList } from "./components/DependencyList";
+import { EndpointsTable } from "./components/EndpointsTable";
 import { IndexProgress } from "./components/IndexProgress";
 import { RepoSelector } from "./components/RepoSelector";
 import type { Citation } from "./types";
@@ -12,6 +14,10 @@ type ViewState =
   | { kind: "not-ready"; repoId: string; status: string }
   | { kind: "ready"; repoId: string };
 
+// SPEC.md §6 Phase 2: dedicated tabs for the two structured routes that
+// also have their own GET endpoints (browse.py), alongside the chat.
+type Tab = "chat" | "endpoints" | "dependencies";
+
 function selectedRepoId(view: ViewState): string | null {
   return view.kind === "idle" ? null : view.repoId;
 }
@@ -19,6 +25,7 @@ function selectedRepoId(view: ViewState): string | null {
 function App() {
   const [view, setView] = useState<ViewState>({ kind: "idle" });
   const [selectedCitation, setSelectedCitation] = useState<Citation | null>(null);
+  const [tab, setTab] = useState<Tab>("chat");
 
   async function handleRepoSelected(repoId: string) {
     try {
@@ -33,6 +40,7 @@ function App() {
       // leaves the current view unchanged.
     }
     setSelectedCitation(null);
+    setTab("chat");
   }
 
   const showCodeViewer = view.kind === "ready" && selectedCitation !== null;
@@ -71,19 +79,50 @@ function App() {
       )}
 
       {view.kind === "ready" && (
-        <div className="flex min-h-0 flex-1 gap-4">
-          <div className="min-h-0 min-w-0 flex-1">
-            <ChatPanel repoId={view.repoId} onCitationClick={setSelectedCitation} />
-          </div>
-          {showCodeViewer && selectedCitation && (
-            <div className="min-h-0 w-[45%] shrink-0">
-              <CodeViewer
-                repoId={view.repoId}
-                citation={selectedCitation}
-                onClose={() => setSelectedCitation(null)}
-              />
+        <div className="flex min-h-0 flex-1 flex-col gap-3">
+          <nav className="flex gap-1 border-b border-neutral-800">
+            {(
+              [
+                ["chat", "Chat"],
+                ["endpoints", "Endpoints"],
+                ["dependencies", "Dependencies"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setTab(key)}
+                className={`px-3 py-1.5 text-sm transition-colors ${
+                  tab === key
+                    ? "border-b-2 border-blue-500 text-neutral-100"
+                    : "text-neutral-500 hover:text-neutral-300"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
+
+          <div className="flex min-h-0 flex-1 gap-4">
+            <div className="min-h-0 min-w-0 flex-1">
+              {tab === "chat" && (
+                <ChatPanel repoId={view.repoId} onCitationClick={setSelectedCitation} />
+              )}
+              {tab === "endpoints" && (
+                <EndpointsTable repoId={view.repoId} onOpenCitation={setSelectedCitation} />
+              )}
+              {tab === "dependencies" && <DependencyList repoId={view.repoId} />}
             </div>
-          )}
+            {showCodeViewer && selectedCitation && (
+              <div className="min-h-0 w-[45%] shrink-0">
+                <CodeViewer
+                  repoId={view.repoId}
+                  citation={selectedCitation}
+                  onClose={() => setSelectedCitation(null)}
+                />
+              </div>
+            )}
+          </div>
         </div>
       )}
 

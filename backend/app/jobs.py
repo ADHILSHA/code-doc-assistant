@@ -14,6 +14,7 @@ import uuid
 
 from app.config import Settings, get_settings
 from app.db import get_registry_connection, get_repo_connection
+from app.index.graph_store import PendingFile, index_file_graph, resolve_and_write_refs
 from app.index.store import index_file
 from app.index.vectors import embed_and_store_chunks
 from app.ingest.source import SourceError, classify_source, resolve_source
@@ -83,6 +84,13 @@ def run_index_job(job_id: str, repo_id: str, source: str, settings: Settings | N
             # task 1: "log which languages fell back".
             chunking_counts: dict[str, int] = {}
             fallback_languages: set[str] = set()
+            # Phase 2 (SPEC.md §6): symbols/endpoints/dependencies are written
+            # per file below (they need no cross-file information); calls and
+            # imports are staged here and resolved into symbol_refs/
+            # import_edges once, after every file's symbols have been
+            # written — see index/graph_store.py's module docstring for why
+            # this has to be two-phase.
+            pending_graph_files: list[PendingFile] = []
 
             for idx, discovered in enumerate(kept):
                 result = index_file(
@@ -94,6 +102,14 @@ def run_index_job(job_id: str, repo_id: str, source: str, settings: Settings | N
                     naive_overlap=settings.chunk_overlap_chars,
                 )
                 total_chunks_written += len(result.chunk_ids)
+
+                if result.changed:
+                    pending_graph_files.append(
+                        index_file_graph(
+                            repo_conn, result.file_id, discovered.path, discovered.text,
+                            discovered.language,
+                        )
+                    )
 
                 if total_chunks_written > settings.max_chunks_per_repo:
                     raise RuntimeError(
@@ -125,6 +141,12 @@ def run_index_job(job_id: str, repo_id: str, source: str, settings: Settings | N
                         message=f"Parsed {idx + 1}/{total_files} files",
                     )
 
+            _update_job(
+                registry_conn, job_id, stage="linking", progress=0.5,
+                message="Resolving symbol references and imports",
+            )
+            resolve_and_write_refs(repo_conn, pending_graph_files)
+
             _update_repo(registry_conn, repo_id, status="embedding")
             _update_job(
                 registry_conn, job_id, stage="embedding", progress=0.55,
@@ -136,6 +158,10 @@ def run_index_job(job_id: str, repo_id: str, source: str, settings: Settings | N
                 batch_size=settings.embedding_batch_size,
             )
 
+            symbols_count = repo_conn.execute("SELECT COUNT(*) AS n FROM symbols").fetchone()["n"]
+            endpoints_count = repo_conn.execute("SELECT COUNT(*) AS n FROM endpoints").fetchone()["n"]
+            dependencies_count = repo_conn.execute("SELECT COUNT(*) AS n FROM dependencies").fetchone()["n"]
+
             stats = {
                 "files": total_files,
                 "files_skipped": len(skipped),
@@ -144,6 +170,9 @@ def run_index_job(job_id: str, repo_id: str, source: str, settings: Settings | N
                 "languages": sorted({f.language for f in kept if f.language}),
                 "chunking": chunking_counts,
                 "fallback_languages": sorted(fallback_languages),
+                "symbols": symbols_count,
+                "endpoints": endpoints_count,
+                "dependencies": dependencies_count,
             }
         finally:
             repo_conn.close()
