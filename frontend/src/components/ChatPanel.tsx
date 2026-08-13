@@ -1,9 +1,14 @@
 import { useState } from "react";
 import { streamQuery } from "../api/client";
-import type { ChatMessage } from "../types";
+import type { ChatMessage, Citation } from "../types";
 import { MessageBubble } from "./MessageBubble";
 
-export function ChatPanel({ repoId }: { repoId: string }) {
+interface ChatPanelProps {
+  repoId: string;
+  onCitationClick: (citation: Citation) => void;
+}
+
+export function ChatPanel({ repoId, onCitationClick }: ChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [question, setQuestion] = useState("");
   const [busy, setBusy] = useState(false);
@@ -66,7 +71,7 @@ export function ChatPanel({ repoId }: { repoId: string }) {
           </p>
         )}
         {messages.map((m) => (
-          <MessageBubble key={m.id} message={m} />
+          <MessageBubble key={m.id} message={m} onCitationClick={onCitationClick} />
         ))}
       </div>
 

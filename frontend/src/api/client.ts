@@ -2,7 +2,7 @@
 // here — the "no business logic in api handlers" rule applies to the
 // frontend's API layer too.
 
-import type { Citation, Job, Repo, SourceChunk } from "../types";
+import type { Citation, FileSlice, Job, Repo, SourceChunk } from "../types";
 
 const BASE = "/api";
 
@@ -44,6 +44,20 @@ export async function deleteRepo(id: string): Promise<void> {
 
 export async function getJob(id: string): Promise<Job> {
   const res = await fetch(`${BASE}/jobs/${id}`);
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
+export async function getFileSlice(
+  repoId: string,
+  path: string,
+  start?: number,
+  end?: number,
+): Promise<FileSlice> {
+  const params = new URLSearchParams({ path });
+  if (start !== undefined) params.set("start", String(start));
+  if (end !== undefined) params.set("end", String(end));
+  const res = await fetch(`${BASE}/repos/${repoId}/file?${params.toString()}`);
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }

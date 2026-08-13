@@ -1,6 +1,12 @@
-import type { ChatMessage } from "../types";
+import type { ChatMessage, Citation } from "../types";
+import { CitationChip } from "./CitationChip";
 
-export function MessageBubble({ message }: { message: ChatMessage }) {
+interface MessageBubbleProps {
+  message: ChatMessage;
+  onCitationClick: (citation: Citation) => void;
+}
+
+export function MessageBubble({ message, onCitationClick }: MessageBubbleProps) {
   const isUser = message.role === "user";
 
   return (
@@ -10,8 +16,9 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
           isUser ? "bg-blue-600 text-white" : "bg-neutral-800 text-neutral-100"
         }`}
       >
-        {/* Phase 0: plaintext only (SPEC.md §6 Phase 0 task 9). Markdown
-            rendering + clickable citation chips arrive in Phase 1. */}
+        {/* Plaintext answer body (SPEC.md §6 Phase 0 task 9 scoped this to
+            plaintext; Phase 1 task 5 only asks for citations to become
+            clickable chips, not full markdown rendering — see DECISIONS.md). */}
         <p className="whitespace-pre-wrap">{message.text}</p>
 
         {message.pending && message.statusLabel && (
@@ -37,12 +44,7 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
         {!!message.citations?.length && (
           <div className="mt-2 flex flex-wrap gap-1">
             {message.citations.map((c) => (
-              <span
-                key={c.id}
-                className="rounded border border-neutral-600 px-1.5 py-0.5 font-mono text-[11px] text-neutral-300"
-              >
-                [{c.path}:{c.start_line}-{c.end_line}]
-              </span>
+              <CitationChip key={c.id} citation={c} onClick={onCitationClick} />
             ))}
           </div>
         )}

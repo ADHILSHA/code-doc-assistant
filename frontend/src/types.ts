@@ -11,6 +11,8 @@ export interface RepoStats {
   chunks: number;
   chunks_embedded: number;
   languages: string[];
+  chunking?: Record<string, number>; // e.g. {"ast": 40, "markdown": 3, "naive": 2}
+  fallback_languages?: string[]; // languages that fell back to the naive splitter
 }
 
 export interface Repo {
@@ -53,6 +55,14 @@ export interface Citation {
   start_line: number;
   end_line: number;
   url: string | null;
+}
+
+export interface FileSlice {
+  path: string;
+  language: string | null;
+  start_line: number;
+  end_line: number;
+  lines: string[];
 }
 
 export type ChatRole = "user" | "assistant";

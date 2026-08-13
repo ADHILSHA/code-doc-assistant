@@ -6,8 +6,8 @@ questions about it, with every factual claim backed by a verified `path:line` ci
 See [SPEC.md](SPEC.md) for the full design and phase plan, and [DECISIONS.md](DECISIONS.md)
 for where the implementation deviated from it and why.
 
-**Status:** Phase 0 (walking skeleton) — naive chunking + retrieval, end-to-end plumbing only.
-Quality is expected to be poor until Phase 1.
+**Status:** Phase 1 (retrieval quality) — AST-aware chunking, hybrid (dense + BM25) retrieval,
+and verified citations with click-through source viewing.
 
 ## Setup
 
@@ -75,11 +75,13 @@ GitHub URL / local path
 One SQLite file per repo (`data/dbs/{repo_id}.db`) plus a small registry DB
 tracking repos and background jobs. No external services beyond the LLM/embedding APIs.
 
-## Known limitations (Phase 0)
+## Known limitations (Phase 1)
 
-- Chunking is naive fixed-size windows, not AST-aware — replaced in Phase 1.
-- Retrieval is dense-only (no BM25/hybrid fusion yet) — Phase 1.
-- Citations are not yet verified against real line ranges — Phase 1.
 - No symbol graph, dependency/endpoint extraction, or query routing yet — Phase 2.
 - No agent/tool-use loop for multi-hop questions yet — Phase 3.
 - No eval harness yet — Phase 4.
+- Answers are buffered (not truly token-streamed) so citations can be verified before
+  display — see DECISIONS.md.
+- Chunker covers Python/JS/TS/TSX/Go/Java/Rust/Ruby + Markdown; anything else (and any
+  file tree-sitter can't cleanly parse) falls back to fixed-size windows.
+- No auth for private repos yet (Phase 5) — see DECISIONS.md for the interim workaround.
