@@ -11,15 +11,18 @@ import json
 import sqlite3
 import traceback
 import uuid
+from collections.abc import Callable
 
 from app.config import Settings, get_settings
 from app.db import get_registry_connection, get_repo_connection
+from app.enrich.summarizer import SummaryStats, summarize_repo
 from app.index.graph_store import PendingFile, index_file_graph, resolve_and_write_refs
 from app.index.store import index_file
 from app.index.vectors import embed_and_store_chunks
 from app.ingest.source import SourceError, classify_source, resolve_source
 from app.ingest.walker import walk_repo
-from app.providers.embeddings import get_embedding_provider
+from app.providers.embeddings import EmbeddingProvider, get_embedding_provider
+from app.providers.llm import LLMProvider, get_summarization_llm_provider
 from app.util import now_iso
 
 
@@ -48,7 +51,18 @@ def create_repo_and_job(source: str, settings: Settings | None = None) -> tuple[
     return repo_id, job_id
 
 
-def run_index_job(job_id: str, repo_id: str, source: str, settings: Settings | None = None) -> None:
+def run_index_job(
+    job_id: str,
+    repo_id: str,
+    source: str,
+    settings: Settings | None = None,
+    summarization_llm_provider: LLMProvider | None = None,
+) -> None:
+    """`summarization_llm_provider` is normally left None (resolved from
+    `settings` below) — the override exists so tests can inject a
+    `FakeLLMProvider` and exercise Phase 3 summarization through the real
+    indexing pipeline without an ANTHROPIC_API_KEY, the same pattern
+    `EmbeddingProvider`/`LLMProvider` selection already uses elsewhere."""
     settings = settings or get_settings()
     registry_conn = get_registry_connection(settings)
     try:
@@ -158,6 +172,28 @@ def run_index_job(job_id: str, repo_id: str, source: str, settings: Settings | N
                 batch_size=settings.embedding_batch_size,
             )
 
+            _update_job(
+                registry_conn, job_id, stage="summarizing", progress=0.9,
+                message="Generating hierarchical summaries",
+            )
+
+            def _on_summary_progress(done: int, total: int) -> None:
+                # Reserve 0.90-0.98 for the (usually dominant) file-level
+                # pass; directory/repo-level summaries fill the rest. Without
+                # this, a repo with many files sat at a single static
+                # "summarizing" message for however long the whole stage
+                # took — indistinguishable from a hung job.
+                progress = 0.9 + 0.08 * (done / max(total, 1))
+                _update_job(
+                    registry_conn, job_id, progress=progress,
+                    message=f"Summarizing files ({done}/{total})",
+                )
+
+            summary_stats = _run_summarization(
+                repo_conn, embedding_provider, settings, resolved.display_name,
+                summarization_llm_provider, _on_summary_progress,
+            )
+
             symbols_count = repo_conn.execute("SELECT COUNT(*) AS n FROM symbols").fetchone()["n"]
             endpoints_count = repo_conn.execute("SELECT COUNT(*) AS n FROM endpoints").fetchone()["n"]
             dependencies_count = repo_conn.execute("SELECT COUNT(*) AS n FROM dependencies").fetchone()["n"]
@@ -173,6 +209,16 @@ def run_index_job(job_id: str, repo_id: str, source: str, settings: Settings | N
                 "symbols": symbols_count,
                 "endpoints": endpoints_count,
                 "dependencies": dependencies_count,
+                "summaries": (
+                    {
+                        "files": summary_stats.files_summarized,
+                        "files_skipped_too_short": summary_stats.files_skipped_too_short,
+                        "directories": summary_stats.directories_summarized,
+                        "repo": summary_stats.repo_summarized,
+                    }
+                    if summary_stats is not None
+                    else None  # skipped — no ANTHROPIC_API_KEY available
+                ),
             }
         finally:
             repo_conn.close()
@@ -191,6 +237,47 @@ def run_index_job(job_id: str, repo_id: str, source: str, settings: Settings | N
         _fail(registry_conn, job_id, repo_id, f"{exc}\n{traceback.format_exc()}")
     finally:
         registry_conn.close()
+
+
+def _run_summarization(
+    repo_conn: sqlite3.Connection,
+    embedding_provider: EmbeddingProvider,
+    settings: Settings,
+    display_name: str,
+    llm_provider_override: LLMProvider | None,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> SummaryStats | None:
+    """None means "skipped" (no ANTHROPIC_API_KEY) — hierarchical
+    summaries are an enrichment on top of a successful index, not required
+    for indexing itself to succeed (SPEC.md §6 Phase 3 task 4), so a
+    missing LLM key here degrades the `overview` route gracefully (falls
+    back to the agent path — see generation/answer.py) rather than failing
+    the whole indexing job.
+
+    File-level summaries run `settings.summary_concurrency` at a time and
+    are capped at `settings.summary_max_files_per_run` — see
+    `enrich/summarizer.py::summarize_repo`'s docstring for why: a fully
+    sequential, uncapped pass could leave the job sitting at "summarizing"
+    for a very long time on a large repo with no visible progress in
+    between, easily mistaken for a hang.
+    """
+    llm_provider = llm_provider_override
+    if llm_provider is None:
+        try:
+            llm_provider = get_summarization_llm_provider(settings)
+        except RuntimeError:
+            return None
+
+    stats = summarize_repo(
+        repo_conn, llm_provider, min_loc=settings.summary_min_loc, display_name=display_name,
+        concurrency=settings.summary_concurrency, max_files=settings.summary_max_files_per_run,
+        on_progress=on_progress,
+    )
+    if stats.pending_embeddings:
+        embed_and_store_chunks(
+            repo_conn, embedding_provider, stats.pending_embeddings, batch_size=settings.embedding_batch_size
+        )
+    return stats
 
 
 def _fail(registry_conn: sqlite3.Connection, job_id: str, repo_id: str, message: str) -> None:

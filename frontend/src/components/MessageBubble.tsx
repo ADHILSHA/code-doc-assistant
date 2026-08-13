@@ -1,5 +1,6 @@
 import type { ChatMessage, Citation } from "../types";
 import { CitationChip } from "./CitationChip";
+import { ToolTrail } from "./ToolTrail";
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -26,6 +27,8 @@ export function MessageBubble({ message, onCitationClick }: MessageBubbleProps) 
         )}
 
         {message.error && <p className="mt-2 text-xs text-red-400">{message.error}</p>}
+
+        {!!message.toolCalls?.length && <ToolTrail toolCalls={message.toolCalls} />}
 
         {!!message.sources?.length && (
           <div className="mt-3 flex flex-wrap gap-1 border-t border-neutral-700 pt-2">

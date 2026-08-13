@@ -25,13 +25,13 @@ def _index_mini_repo(mini_repo_path: Path, tmp_path: Path):
 def test_get_file_slice_happy_path(mini_repo_path: Path, tmp_path: Path):
     client, repo_id = _index_mini_repo(mini_repo_path, tmp_path)
 
-    resp = client.get(f"/api/repos/{repo_id}/file", params={"path": "src/auth/auth.py", "start": 17, "end": 21})
+    resp = client.get(f"/api/repos/{repo_id}/file", params={"path": "src/auth/auth.py", "start": 18, "end": 22})
     assert resp.status_code == 200
     body = resp.json()
     assert body["path"] == "src/auth/auth.py"
     assert body["language"] == "python"
-    assert body["start_line"] == 17
-    assert body["end_line"] == 21
+    assert body["start_line"] == 18
+    assert body["end_line"] == 22
     assert len(body["lines"]) == 5
     assert "def hash_password" in body["lines"][0]
 

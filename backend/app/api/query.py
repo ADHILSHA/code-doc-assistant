@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
 from typing import cast
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -76,7 +77,7 @@ def query(
     llm_provider: LLMProvider = Depends(llm_provider_dependency),
 ) -> EventSourceResponse:
     row = registry_conn.execute(
-        "SELECT status, source_type, display_name, commit_sha FROM repos WHERE id = ?",
+        "SELECT status, source_type, display_name, commit_sha, local_path FROM repos WHERE id = ?",
         (body.repo_id,),
     ).fetchone()
     if row is None:
@@ -92,6 +93,9 @@ def query(
         owner_repo=row["display_name"] if row["source_type"] == "github" else None,
         commit_sha=row["commit_sha"],
     )
+    # Phase 3: the agent's read_file/grep/find_files tools read from the
+    # repo's working tree on disk, path-jailed to this root.
+    repo_root = Path(row["local_path"])
 
     try:
         repo_conn = get_repo_connection(body.repo_id, embedding_provider.dim, settings)
@@ -106,7 +110,9 @@ def query(
                 embedding_provider,
                 llm_provider,
                 repo_context,
+                repo_root,
                 question=body.question,
+                session_id=body.session_id,
             )
         finally:
             repo_conn.close()

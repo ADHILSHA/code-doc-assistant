@@ -3,6 +3,10 @@ and `locate` routes (SPEC.md §6 Phase 2 task 5) — exact, deterministic,
 answer in well under a second, and can't hallucinate since every field
 comes straight out of a table that's a direct product of parsing (Phase 2
 tasks 1-4), not a generated summary of it.
+
+`find_references`/`list_directory_contents` (Phase 3) back the agent's
+`find_references`/`list_directory` tools (agent/tools.py) — same "exact,
+DB-only, no LLM" spirit, just not tied to one of the five chat routes.
 """
 
 from __future__ import annotations
@@ -135,3 +139,64 @@ def extract_candidate_names(question: str) -> list[str]:
             seen.add(name)
             ordered.append(name)
     return ordered
+
+
+# --- agent tools (SPEC.md §6 Phase 3 task 3): find_references, list_directory ---
+
+
+@dataclass(frozen=True)
+class ReferenceLocation:
+    file_path: str
+    line: int
+    from_symbol: str | None  # the enclosing symbol at the call site, if resolvable
+
+
+def find_references(conn: sqlite3.Connection, name: str) -> list[ReferenceLocation]:
+    """Every resolved call site targeting a symbol named `name` — the
+    reverse of `get_definition`. [] if the name doesn't resolve to any
+    symbol, or resolves but is never called anywhere `symbol_refs` could
+    resolve (matches parsing/refs.py's Phase 2 resolution rules — an
+    ambiguous or unresolved call site is invisible here too, not guessed)."""
+    rows = conn.execute(
+        "SELECT f.path, sr.line, caller.name AS from_symbol "
+        "FROM symbol_refs sr "
+        "JOIN symbols s ON s.id = sr.resolved_symbol_id "
+        "JOIN files f ON f.id = sr.from_file_id "
+        "LEFT JOIN symbols caller ON caller.id = sr.from_symbol_id "
+        "WHERE s.name = ? "
+        "ORDER BY f.path, sr.line",
+        (name,),
+    ).fetchall()
+    return [
+        ReferenceLocation(file_path=r["path"], line=r["line"], from_symbol=r["from_symbol"])
+        for r in rows
+    ]
+
+
+@dataclass(frozen=True)
+class DirectoryListing:
+    directories: list[str]
+    files: list[str]
+
+
+def list_directory_contents(conn: sqlite3.Connection, path: str) -> DirectoryListing:
+    """Immediate children only (not recursive) — subdirectory names, and
+    file paths directly in `path`. `path=""` lists the repo root. Derived
+    from `files.path` (what's actually indexed), not a filesystem walk —
+    consistent with what every other tool/route can actually cite."""
+    normalized = path.strip("/")
+    prefix = f"{normalized}/" if normalized else ""
+    dirs: set[str] = set()
+    files: list[str] = []
+    for row in conn.execute("SELECT path FROM files"):
+        p = row["path"]
+        if prefix and not p.startswith(prefix):
+            continue
+        remainder = p[len(prefix):]
+        if not remainder:
+            continue
+        if "/" in remainder:
+            dirs.add(remainder.split("/", 1)[0])
+        else:
+            files.append(p)
+    return DirectoryListing(directories=sorted(dirs), files=sorted(files))

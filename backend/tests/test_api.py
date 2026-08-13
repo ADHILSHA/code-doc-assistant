@@ -14,13 +14,15 @@ from app.config import Settings, get_settings
 from app.db import get_registry_connection
 from app.main import create_app
 from app.providers.embeddings import FakeEmbeddingProvider
-from app.providers.llm import FakeLLMProvider
+from app.providers.llm import FakeLLMProvider, LLMProvider
 from app.util import now_iso
 
 from .conftest import make_settings
 
 
-def _make_client(tmp_path: Path, *, settings: Settings | None = None) -> tuple[TestClient, Settings]:
+def _make_client(
+    tmp_path: Path, *, settings: Settings | None = None, llm_provider: LLMProvider | None = None
+) -> tuple[TestClient, Settings]:
     # allow_local_repos=True: these tests index tests/fixtures/mini_repo by
     # local path through the real HTTP API — that's how the suite avoids
     # network calls (SPEC.md §7.2). Production defaults to False; see
@@ -29,7 +31,7 @@ def _make_client(tmp_path: Path, *, settings: Settings | None = None) -> tuple[T
     app = create_app()
     app.dependency_overrides[get_settings] = lambda: settings
     app.dependency_overrides[embedding_provider_dependency] = lambda: FakeEmbeddingProvider()
-    app.dependency_overrides[llm_provider_dependency] = lambda: FakeLLMProvider()
+    app.dependency_overrides[llm_provider_dependency] = lambda: llm_provider or FakeLLMProvider()
     return TestClient(app), settings
 
 
@@ -62,7 +64,23 @@ def _wait_for_job(client: TestClient, job_id: str, *, timeout: float = 10.0) -> 
 
 
 def test_end_to_end_index_and_query(mini_repo_path: Path, tmp_path: Path):
-    client, _settings = _make_client(tmp_path)
+    from app.providers.llm import ToolUseResponse
+
+    # "how do we hash passwords" routes to "explain" (Phase 3: hybrid
+    # retrieval -> expansion -> rerank -> the agent loop), which needs
+    # `complete_with_tools`, not `complete()` — script one scripted
+    # immediate-final-answer response (no tool calls) so the agent
+    # short-circuits the same way a confident real model would for a
+    # question its seed context already answers.
+    fake_llm = FakeLLMProvider(
+        tool_responses=[
+            ToolUseResponse(
+                text="Passwords are hashed in `hash_password` [src/auth/auth.py:17-21].",
+                tool_calls=[],
+            )
+        ]
+    )
+    client, _settings = _make_client(tmp_path, llm_provider=fake_llm)
 
     resp = client.post("/api/repos", json={"source": str(mini_repo_path)})
     assert resp.status_code == 202

@@ -2,7 +2,16 @@
 // here — the "no business logic in api handlers" rule applies to the
 // frontend's API layer too.
 
-import type { Citation, Dependency, Endpoint, FileSlice, Job, Repo, SourceChunk } from "../types";
+import type {
+  Citation,
+  Dependency,
+  Endpoint,
+  FileSlice,
+  Job,
+  Repo,
+  SourceChunk,
+  ToolCallEvent,
+} from "../types";
 
 const BASE = "/api";
 
@@ -120,6 +129,7 @@ function parseRawEvent(raw: string): RawSSEEvent | null {
 export interface QueryHandlers {
   onStatus?: (stage: string, detail: string) => void;
   onSources?: (chunks: SourceChunk[]) => void;
+  onTool?: (call: ToolCallEvent) => void;
   onToken?: (text: string) => void;
   onCitations?: (citations: Citation[]) => void;
   onDone?: (queryId: number, latencyMs: number, route: string) => void;
@@ -131,13 +141,14 @@ export async function streamQuery(
   question: string,
   handlers: QueryHandlers,
   signal?: AbortSignal,
+  sessionId?: string,
 ): Promise<void> {
   let response: Response;
   try {
     response = await fetch(`${BASE}/query`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ repo_id: repoId, question }),
+      body: JSON.stringify({ repo_id: repoId, question, session_id: sessionId }),
       signal,
     });
   } catch (err) {
@@ -163,6 +174,9 @@ export async function streamQuery(
         break;
       case "sources":
         handlers.onSources?.(payload.chunks);
+        break;
+      case "tool":
+        handlers.onTool?.(payload as ToolCallEvent);
         break;
       case "token":
         handlers.onToken?.(payload.text);

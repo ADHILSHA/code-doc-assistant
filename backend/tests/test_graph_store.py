@@ -12,7 +12,13 @@ from pathlib import Path
 from app import jobs
 from app.db import get_repo_connection
 from app.providers.embeddings import FakeEmbeddingProvider
-from app.retrieval.structured import get_definition, list_dependencies, list_endpoints
+from app.retrieval.structured import (
+    find_references,
+    get_definition,
+    list_dependencies,
+    list_directory_contents,
+    list_endpoints,
+)
 
 from .conftest import MINI_REPO, make_settings
 
@@ -123,3 +129,49 @@ def test_reindexing_unchanged_repo_does_not_duplicate_rows(tmp_path: Path):
 
     assert second_symbols == first_symbols
     assert second_endpoints == first_endpoints
+
+
+def test_find_references_returns_every_resolved_call_site(tmp_path: Path):
+    conn, _ = _index_mini_repo(tmp_path)
+
+    refs = find_references(conn, "get_user_by_id")
+    locations = {(r.file_path, r.line) for r in refs}
+    assert ("tests/test_service.py", 10) in locations
+    assert ("tests/test_service.py", 17) in locations
+    assert all(r.from_symbol is not None for r in refs)
+
+
+def test_find_references_unknown_symbol_is_empty(tmp_path: Path):
+    conn, _ = _index_mini_repo(tmp_path)
+    assert find_references(conn, "ThisSymbolDoesNotExist") == []
+
+
+def test_list_directory_contents_repo_root(tmp_path: Path):
+    conn, _ = _index_mini_repo(tmp_path)
+    listing = list_directory_contents(conn, "")
+    assert set(listing.directories) == {"src", "tests", "web"}
+    assert "package.json" in listing.files
+    assert "pyproject.toml" in listing.files
+    # not recursive: nothing from inside src/ leaks into the root listing
+    assert not any("/" in f for f in listing.files)
+
+
+def test_list_directory_contents_nested_directory(tmp_path: Path):
+    conn, _ = _index_mini_repo(tmp_path)
+    listing = list_directory_contents(conn, "src")
+    assert set(listing.directories) == {"api", "auth", "users"}
+    assert "src/big_handler.py" in listing.files
+
+
+def test_list_directory_contents_leaf_directory_has_no_subdirectories(tmp_path: Path):
+    conn, _ = _index_mini_repo(tmp_path)
+    listing = list_directory_contents(conn, "src/users")
+    assert listing.directories == []
+    assert "src/users/service.py" in listing.files
+
+
+def test_list_directory_contents_unknown_directory_is_empty(tmp_path: Path):
+    conn, _ = _index_mini_repo(tmp_path)
+    listing = list_directory_contents(conn, "does/not/exist")
+    assert listing.directories == []
+    assert listing.files == []

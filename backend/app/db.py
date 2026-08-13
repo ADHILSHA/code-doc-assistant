@@ -180,6 +180,30 @@ REPO_MIGRATIONS: list[str] = [
       source TEXT
     );
     """,
+    # v4 (Phase 3) — hierarchical summaries + session memory.
+    #
+    # `summaries` is verbatim from SPEC.md §4. `query_log.session_id` is
+    # NOT in §4's schema — added because "rewrite follow-up questions
+    # against the last 3 turns" (SPEC.md §6 Phase 3 task 5) needs a way to
+    # find "the last 3 turns of *this conversation*", and query_log is
+    # already the per-repo turn history; a bare ALTER TABLE ADD COLUMN
+    # keeps that history intact instead of introducing a parallel
+    # conversation-log table. See DECISIONS.md.
+    """
+    CREATE TABLE summaries (
+      id INTEGER PRIMARY KEY,
+      scope TEXT,
+      target_path TEXT NOT NULL,
+      content TEXT NOT NULL,
+      source_hash TEXT NOT NULL,
+      model TEXT,
+      created_at TEXT
+    );
+    CREATE INDEX idx_summaries_scope_path ON summaries(scope, target_path);
+
+    ALTER TABLE query_log ADD COLUMN session_id TEXT;
+    CREATE INDEX idx_query_log_session ON query_log(session_id);
+    """,
 ]
 
 

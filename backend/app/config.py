@@ -70,6 +70,40 @@ class Settings(BaseSettings):
     rrf_k: int = 60
     hybrid_top_n: int = 30
 
+    # --- Graph expansion (Phase 3 task 1) ---
+    expand_max_hops: int = 2
+    # Same rough chars/4 approximation `index/store.py` already uses for
+    # `chunks.token_count` — good enough for a budget cutoff, not an exact count.
+    expand_token_budget: int = 4000
+
+    # --- Reranking (Phase 3 task 2) ---
+    rerank_keep_n: int = 12
+
+    # --- Agent loop (Phase 3 task 3) ---
+    agent_max_iterations: int = 15
+    agent_max_context_tokens: int = 60_000
+    agent_max_wall_seconds: int = 40
+    agent_read_file_max_lines: int = 400
+    agent_grep_max_results: int = 50
+
+    # --- Hierarchical summaries (Phase 3 task 4) ---
+    summary_min_loc: int = 20
+    # File-level summaries are independent of each other (unlike
+    # directory/repo-level ones, which need their children's summaries
+    # first) — run this many summarization calls concurrently instead of
+    # one-at-a-time, so a repo with dozens/hundreds of files doesn't spend
+    # minutes with the job stuck at "summarizing" and no visible progress.
+    summary_concurrency: int = 6
+    # Hard cap on how many *uncached* files get summarized in one run — a
+    # cost/latency guardrail (SPEC.md §7.4) for very large repos, same
+    # spirit as MAX_CHUNKS_PER_REPO below. Files beyond this cap are simply
+    # not summarized this run (they'll be picked up on a later reindex);
+    # indexing itself is never blocked on it.
+    summary_max_files_per_run: int = 300
+
+    # --- Session memory (Phase 3 task 5) ---
+    session_history_turns: int = 3
+
     # --- Cost / performance guardrails (SPEC.md §7.4-7.5) ---
     max_chunks_per_repo: int = 50_000
     max_repo_size_mb: int = 500

@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { streamQuery } from "../api/client";
-import type { ChatMessage, Citation } from "../types";
+import type { ChatMessage, Citation, ToolCallEvent } from "../types";
 import { MessageBubble } from "./MessageBubble";
 
 interface ChatPanelProps {
@@ -12,6 +12,17 @@ export function ChatPanel({ repoId, onCitationClick }: ChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [question, setQuestion] = useState("");
   const [busy, setBusy] = useState(false);
+  // SPEC.md §6 Phase 3 task 5: a stable id for this conversation, so
+  // follow-up questions ("how does it handle errors?") can be resolved
+  // against the last few turns (retrieval/session.py). Regenerated
+  // whenever the selected repo changes — a session is scoped to one
+  // repo's conversation, not the whole app lifetime.
+  const [sessionId, setSessionId] = useState(() => crypto.randomUUID());
+
+  useEffect(() => {
+    setMessages([]);
+    setSessionId(crypto.randomUUID());
+  }, [repoId]);
 
   function updateMessage(id: string, patch: Partial<ChatMessage>) {
     setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
@@ -36,28 +47,40 @@ export function ChatPanel({ repoId, onCitationClick }: ChatPanelProps) {
     };
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
 
-    await streamQuery(repoId, q, {
-      onStatus: (stage, detail) => {
-        updateMessage(assistantId, { statusLabel: detail || stage });
+    const toolCalls: ToolCallEvent[] = [];
+
+    await streamQuery(
+      repoId,
+      q,
+      {
+        onStatus: (stage, detail) => {
+          updateMessage(assistantId, { statusLabel: detail || stage });
+        },
+        onSources: (chunks) => {
+          updateMessage(assistantId, { sources: chunks });
+        },
+        onTool: (call) => {
+          toolCalls.push(call);
+          updateMessage(assistantId, { toolCalls: [...toolCalls] });
+        },
+        onToken: (text) => {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === assistantId ? { ...m, text: m.text + text } : m)),
+          );
+        },
+        onCitations: (citations) => {
+          updateMessage(assistantId, { citations });
+        },
+        onDone: () => {
+          updateMessage(assistantId, { pending: false, statusLabel: undefined });
+        },
+        onError: (message) => {
+          updateMessage(assistantId, { pending: false, statusLabel: undefined, error: message });
+        },
       },
-      onSources: (chunks) => {
-        updateMessage(assistantId, { sources: chunks });
-      },
-      onToken: (text) => {
-        setMessages((prev) =>
-          prev.map((m) => (m.id === assistantId ? { ...m, text: m.text + text } : m)),
-        );
-      },
-      onCitations: (citations) => {
-        updateMessage(assistantId, { citations });
-      },
-      onDone: () => {
-        updateMessage(assistantId, { pending: false, statusLabel: undefined });
-      },
-      onError: (message) => {
-        updateMessage(assistantId, { pending: false, statusLabel: undefined, error: message });
-      },
-    });
+      undefined,
+      sessionId,
+    );
 
     setBusy(false);
   }

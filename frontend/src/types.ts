@@ -90,12 +90,21 @@ export interface Dependency {
 
 export type ChatRole = "user" | "assistant";
 
+// SPEC.md §5 Phase 3: emitted once per agent tool call, live while the
+// agent loop runs — the frontend shows these as the agent's reasoning trail.
+export interface ToolCallEvent {
+  name: string;
+  input: Record<string, unknown>;
+  result_summary: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: ChatRole;
   text: string;
   sources?: SourceChunk[];
   citations?: Citation[];
+  toolCalls?: ToolCallEvent[];
   statusLabel?: string; // last "status" event seen, shown while streaming
   pending?: boolean; // true until the "done"/"error" event arrives
   error?: string;

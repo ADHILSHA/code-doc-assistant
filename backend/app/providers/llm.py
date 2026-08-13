@@ -4,13 +4,27 @@
 — avoiding shared mutable state on the provider instance (which would race
 under concurrent requests) while still surfacing token counts for
 `query_log` once the stream is exhausted.
+
+`complete_with_tools`'s *response* shape (Phase 3, `ToolUseResponse`/
+`ToolCall`) is fully vendor-neutral, same spirit as `LLMResponse` — agent/
+loop.py never sees an Anthropic SDK type. Its *request* shape (`messages`)
+is the one place this module doesn't fully abstract the vendor away:
+`complete`/`stream` use plain `{"role": ..., "content": <str>}` dicts, but a
+multi-turn tool-use conversation needs structured content (an assistant
+turn's `tool_use` blocks, a user turn's matching `tool_result` blocks) —
+Anthropic's native block shape, passed straight through by
+`AnthropicLLMProvider` and accepted as-is by `FakeLLMProvider` (which only
+ever reads the parts it needs, never an SDK type). Building a second,
+fully vendor-neutral message-content abstraction just for tool
+conversations was judged not worth it for a single-provider (Anthropic)
+project — see DECISIONS.md.
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
 
 from app.config import Settings
@@ -28,6 +42,21 @@ class LLMResponse:
     usage: LLMUsage
 
 
+@dataclass
+class ToolCall:
+    id: str
+    name: str
+    input: dict[str, Any]
+
+
+@dataclass
+class ToolUseResponse:
+    text: str  # any plain text the model produced alongside/before its tool calls
+    tool_calls: list[ToolCall] = field(default_factory=list)  # [] means "final answer, no more tools"
+    stop_reason: str | None = None
+    usage: LLMUsage | None = None
+
+
 class LLMProvider(Protocol):
     model: str
 
@@ -39,17 +68,14 @@ class LLMProvider(Protocol):
         self, *, system: str, messages: list[dict[str, str]], max_tokens: int = 1024
     ) -> Iterator[str | LLMUsage]: ...
 
-    # Exact tool-schema shape is finalized in Phase 3 when agent/tools.py
-    # defines the tool specs; declared now so the provider shape matches
-    # SPEC.md §7.2 and adapters don't need reshaping later.
     def complete_with_tools(
         self,
         *,
         system: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         max_tokens: int = 1024,
-    ) -> Any: ...
+    ) -> ToolUseResponse: ...
 
 
 class FakeLLMProvider:
@@ -60,13 +86,19 @@ class FakeLLMProvider:
     to script exact multi-turn behavior instead (e.g. testing citations.py's
     regenerate-once path: a first call returning a bad citation, a second
     returning a good one) — one list entry popped per `complete`/`stream`
-    call.
+    call. Pass `tool_responses` to script `complete_with_tools` calls the
+    same way — one `ToolUseResponse` popped per call (agent/loop.py tests).
     """
 
     model = "fake-llm"
 
-    def __init__(self, responses: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        responses: list[str] | None = None,
+        tool_responses: list[ToolUseResponse] | None = None,
+    ) -> None:
         self._responses = list(responses) if responses is not None else None
+        self._tool_responses = list(tool_responses) if tool_responses is not None else None
 
     def complete(
         self, *, system: str, messages: list[dict[str, str]], max_tokens: int = 1024
@@ -93,13 +125,19 @@ class FakeLLMProvider:
         self,
         *,
         system: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         max_tokens: int = 1024,
-    ) -> Any:
-        raise NotImplementedError(
-            "FakeLLMProvider.complete_with_tools lands in Phase 3 with the agent tool schema"
-        )
+    ) -> ToolUseResponse:
+        if self._tool_responses is None:
+            raise AssertionError(
+                "FakeLLMProvider.complete_with_tools requires tool_responses= to be scripted — "
+                "there's no sensible default the way complete()/stream() have one, since a caller "
+                "needs to control exactly when the fake agent stops calling tools."
+            )
+        if not self._tool_responses:
+            raise AssertionError("FakeLLMProvider ran out of scripted tool_responses")
+        return self._tool_responses.pop(0)
 
     @staticmethod
     def _usage(system: str, messages: list[dict[str, str]], text: str) -> LLMUsage:
@@ -154,16 +192,30 @@ class AnthropicLLMProvider:
         self,
         *,
         system: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         max_tokens: int = 1024,
-    ) -> Any:
-        return self._client.messages.create(
+    ) -> ToolUseResponse:
+        resp = self._client.messages.create(
             model=self.model,
             system=system,
             messages=cast(Any, messages),
             tools=cast(Any, tools),
             max_tokens=max_tokens,
+        )
+        text = "".join(block.text for block in resp.content if block.type == "text")
+        tool_calls = [
+            ToolCall(id=block.id, name=block.name, input=block.input)
+            for block in resp.content
+            if block.type == "tool_use"
+        ]
+        return ToolUseResponse(
+            text=text,
+            tool_calls=tool_calls,
+            stop_reason=resp.stop_reason,
+            usage=LLMUsage(
+                input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens
+            ),
         )
 
 
