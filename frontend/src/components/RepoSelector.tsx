@@ -59,7 +59,7 @@ export function RepoSelector({
           type="text"
           value={source}
           onChange={(e) => setSource(e.target.value)}
-          placeholder="GitHub URL or local path…"
+          placeholder="GitHub URL…"
           className="flex-1 rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm
                      text-neutral-100 placeholder:text-neutral-500 focus:border-neutral-500
                      focus:outline-none"

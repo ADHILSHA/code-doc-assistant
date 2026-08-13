@@ -105,24 +105,6 @@ class OpenAIEmbeddingProvider:
         return self.embed_documents([text])[0]
 
 
-class FastEmbedProvider:
-    """Local ONNX model via `fastembed` — no API key, works offline. Default
-    for dev/demo (see config.py::embedding_provider)."""
-
-    def __init__(self, model: str) -> None:
-        from fastembed import TextEmbedding  # lazy import: optional dependency
-
-        self._impl = TextEmbedding(model_name=model)
-        probe = next(iter(self._impl.embed(["dimension probe"])))
-        self.dim = len(probe)
-
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return [v.tolist() for v in self._impl.embed(texts)]
-
-    def embed_query(self, text: str) -> list[float]:
-        return self.embed_documents([text])[0]
-
-
 def get_embedding_provider(settings: Settings) -> EmbeddingProvider:
     kind = settings.embedding_provider
     if kind == "fake":
@@ -135,6 +117,4 @@ def get_embedding_provider(settings: Settings) -> EmbeddingProvider:
         if not settings.openai_api_key:
             raise RuntimeError("EMBEDDING_PROVIDER=openai requires OPENAI_API_KEY")
         return OpenAIEmbeddingProvider(settings.openai_api_key, settings.openai_embedding_model)
-    if kind == "fastembed":
-        return FastEmbedProvider(settings.fastembed_model)
     raise ValueError(f"Unknown embedding provider: {kind}")

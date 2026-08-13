@@ -17,10 +17,15 @@ Quality is expected to be poor until Phase 1.
 cd backend
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
-cp ../.env.example .env   # then fill in ANTHROPIC_API_KEY etc.
+pip install -e ".[dev,embeddings]"   # embeddings: voyageai/openai adapters
+cp ../.env.example .env   # then fill in ANTHROPIC_API_KEY and VOYAGE_API_KEY
 uvicorn app.main:app --reload --port 8000
 ```
+
+**Python version:** use Homebrew's `python3.12` (or another distro build with
+`--enable-loadable-sqlite-extensions`), not a pyenv-built interpreter — pyenv's
+default build lacks loadable SQLite extension support, which `sqlite-vec`
+requires. See DECISIONS.md for the full story.
 
 Run tests (no network calls, fake providers only):
 
@@ -46,9 +51,10 @@ See [.env.example](.env.example). Copy it to `backend/.env`.
 | Var | Purpose |
 |---|---|
 | `ANTHROPIC_API_KEY` | Synthesis (`claude-sonnet-5`) and summarization (`claude-haiku-4-5`) |
-| `EMBEDDING_PROVIDER` | `voyage` \| `openai` \| `fastembed` (local, offline, no key needed) |
-| `VOYAGE_API_KEY` / `OPENAI_API_KEY` | Only needed if `EMBEDDING_PROVIDER` selects that adapter |
+| `EMBEDDING_PROVIDER` | `voyage` (default, code-specialized) \| `openai` |
+| `VOYAGE_API_KEY` / `OPENAI_API_KEY` | Only needed if `EMBEDDING_PROVIDER` selects that adapter — `VOYAGE_API_KEY` is required with the default provider |
 | `DATA_DIR` | Where clones and per-repo SQLite DBs are stored |
+| `ALLOW_LOCAL_REPOS` | `false` by default — `POST /api/repos` only accepts GitHub URLs. Set `true` to also index local filesystem paths (safe for this single-user local setup; **do not** enable on a shared/hosted deployment — see DECISIONS.md) |
 
 ## Architecture
 

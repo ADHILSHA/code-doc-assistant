@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.config import Settings
 from app.db import get_repo_connection
 from app.index.vectors import embed_and_store_chunks, query_top_k
 from app.providers.embeddings import FakeEmbeddingProvider
+
+from .conftest import make_settings
 
 
 def _insert_chunk(conn, file_path: str, content: str) -> int:
@@ -30,7 +31,7 @@ def _insert_chunk(conn, file_path: str, content: str) -> int:
 
 
 def test_embed_and_query_top_k_ranks_relevant_chunk_first(tmp_path: Path):
-    settings = Settings(data_dir=tmp_path / "data", embedding_provider="fake")
+    settings = make_settings(tmp_path)
     provider = FakeEmbeddingProvider()
     conn = get_repo_connection("repo1", provider.dim, settings)
 
@@ -49,14 +50,14 @@ def test_embed_and_query_top_k_ranks_relevant_chunk_first(tmp_path: Path):
 
 
 def test_query_top_k_empty_index_returns_empty(tmp_path: Path):
-    settings = Settings(data_dir=tmp_path / "data", embedding_provider="fake")
+    settings = make_settings(tmp_path)
     provider = FakeEmbeddingProvider()
     conn = get_repo_connection("repo1", provider.dim, settings)
     assert query_top_k(conn, provider, "anything", k=5) == []
 
 
 def test_query_top_k_zero_k_returns_empty(tmp_path: Path):
-    settings = Settings(data_dir=tmp_path / "data", embedding_provider="fake")
+    settings = make_settings(tmp_path)
     provider = FakeEmbeddingProvider()
     conn = get_repo_connection("repo1", provider.dim, settings)
     assert query_top_k(conn, provider, "anything", k=0) == []

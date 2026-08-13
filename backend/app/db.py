@@ -136,7 +136,7 @@ def get_repo_connection(
     loaded and `chunk_vectors` sized for `embedding_dim`.
 
     `embedding_dim` must match whichever EmbeddingProvider indexed this repo
-    (voyage-code-3=1024, the fastembed default=384, ...) — see
+    (voyage-code-3=1024, OpenAI's text-embedding-3-small=1536, ...) — see
     `_ensure_vector_table`.
     """
     settings = settings or get_settings()

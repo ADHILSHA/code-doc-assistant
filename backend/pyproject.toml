@@ -2,7 +2,12 @@
 name = "code-doc-assistant-backend"
 version = "0.1.0"
 description = "Backend for the Code Documentation Assistant"
-requires-python = ">=3.11"
+# 3.12 floor: numpy's type stubs (pulled in transitively by voyageai) use
+# PEP 695 syntax that mypy can only parse when targeting 3.12+, regardless
+# of the syntax our own code uses. See DECISIONS.md for the full story
+# (this constraint was first found via a since-removed fastembed/onnxruntime
+# dependency, but holds independently of that).
+requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.32",
@@ -15,10 +20,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Real embedding adapters. `fastembed` runs a local ONNX model — no API key,
-# works offline, good default for dev/demo. voyageai/openai require keys.
+# Real embedding adapters — both require an API key (VOYAGE_API_KEY /
+# OPENAI_API_KEY respectively). voyage-code-3 is the default (SPEC.md §2).
 embeddings = [
-  "fastembed>=0.4",
   "voyageai>=0.3",
   "openai>=1.50",
 ]
@@ -49,7 +53,7 @@ asyncio_mode = "auto"
 line-length = 100
 # Match the project's declared floor (requires-python above), not whichever
 # interpreter happens to run locally.
-target-version = "py311"
+target-version = "py312"
 # tests/fixtures/mini_repo is fixture *data* meant to look like real foreign
 # code (including a fake generated protobuf file) — it's deliberately not
 # written to our own style rules.
@@ -62,6 +66,6 @@ extend-exclude = ["tests/fixtures"]
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Body"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 ignore_missing_imports = true
 exclude = ["tests/fixtures"]

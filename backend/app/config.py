@@ -27,6 +27,16 @@ class Settings(BaseSettings):
     # --- CORS ---
     frontend_origin: str = "http://localhost:5173"
 
+    # --- Security ---
+    # "local path" means local to wherever this *server* runs, not to whoever
+    # calls the API. Off by default: exposing arbitrary server-side
+    # filesystem paths to POST /api/repos is an information-disclosure hole
+    # the moment this is anything but a single-user, localhost-only setup.
+    # Set true in your own .env for local single-user dev use. Tests set it
+    # per-Settings-instance (they need it — it's how the suite avoids network
+    # calls) without touching this default.
+    allow_local_repos: bool = False
+
     # --- LLM ---
     anthropic_api_key: str | None = None
     synthesis_model: str = "claude-sonnet-5"
@@ -34,13 +44,12 @@ class Settings(BaseSettings):
 
     # --- Embeddings ---
     # "fake" is used only by tests (see providers/embeddings.py::FakeEmbeddingProvider).
-    embedding_provider: Literal["voyage", "openai", "fastembed", "fake"] = "fastembed"
+    # Default is voyage-code-3, a code-specialized model — matches SPEC.md §2.
+    embedding_provider: Literal["voyage", "openai", "fake"] = "voyage"
     voyage_api_key: str | None = None
     openai_api_key: str | None = None
     voyage_embedding_model: str = "voyage-code-3"
     openai_embedding_model: str = "text-embedding-3-small"
-    # Small, fast, no-API-key model — good default for offline dev/demo.
-    fastembed_model: str = "BAAI/bge-small-en-v1.5"
 
     # --- Chunking (Phase 0: naive fixed-size windows; replaced in Phase 1) ---
     chunk_size_chars: int = 1500

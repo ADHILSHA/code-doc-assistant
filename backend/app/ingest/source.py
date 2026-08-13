@@ -11,6 +11,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 from app.config import Settings
 from app.models import SourceType
@@ -29,26 +30,56 @@ class ResolvedSource:
     display_name: str
 
 
-_GITHUB_URL_RE = re.compile(
-    r"^(?:https?://github\.com/|git@github\.com:)([\w.-]+)/([\w.-]+?)(?:\.git)?/?$"
-)
+_SSH_GITHUB_RE = re.compile(r"^git@github\.com:(?P<owner>[\w.-]+)/(?P<repo>[\w.-]+?)(?:\.git)?/?$")
+
+
+def _parse_github_url(source: str) -> tuple[str, str] | None:
+    """Returns (owner, repo) if `source` points at a GitHub repo, tolerating
+    the messy URLs people actually paste: query strings (`?utm_source=...`),
+    fragments (`#readme`), extra path segments (`/tree/main`), a trailing
+    `.git`, trailing slashes, or `www.` — anything, as long as the host is
+    github.com and the path starts with `owner/repo`. Returns None for
+    anything else (treated as a local path).
+    """
+    source = source.strip()
+
+    ssh_match = _SSH_GITHUB_RE.match(source)
+    if ssh_match:
+        return ssh_match.group("owner"), ssh_match.group("repo")
+
+    parsed = urlparse(source if "://" in source else f"https://{source}")
+    if parsed.scheme not in ("http", "https"):
+        return None
+    host = parsed.netloc.lower().removeprefix("www.")
+    if host != "github.com":
+        return None
+
+    parts = [p for p in parsed.path.split("/") if p]
+    if len(parts) < 2:
+        return None
+    owner, repo = parts[0], parts[1].removesuffix(".git")
+    if not owner or not repo:
+        return None
+    return owner, repo
 
 
 def classify_source(source: str) -> SourceType:
-    return "github" if _GITHUB_URL_RE.match(source.strip()) else "local"
+    return "github" if _parse_github_url(source) is not None else "local"
 
 
 def resolve_source(source: str, repo_id: str, settings: Settings) -> ResolvedSource:
     source = source.strip()
-    if classify_source(source) == "github":
-        return _clone_github(source, repo_id, settings)
+    parsed = _parse_github_url(source)
+    if parsed is not None:
+        return _clone_github(*parsed, repo_id=repo_id, settings=settings)
     return _validate_local(source)
 
 
-def _clone_github(url: str, repo_id: str, settings: Settings) -> ResolvedSource:
-    match = _GITHUB_URL_RE.match(url)
-    assert match is not None
-    owner, name = match.group(1), match.group(2)
+def _clone_github(owner: str, name: str, *, repo_id: str, settings: Settings) -> ResolvedSource:
+    # Clone from a canonical URL we build ourselves, not the raw pasted
+    # input — a query string or `/tree/main` suffix passed straight to
+    # `git clone` would confuse or break it.
+    url = f"https://github.com/{owner}/{name}.git"
 
     dest = settings.repo_clone_path(repo_id)
     if dest.exists():

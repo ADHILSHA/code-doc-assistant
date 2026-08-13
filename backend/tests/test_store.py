@@ -6,11 +6,12 @@ from pathlib import Path
 
 import sqlite_vec
 
-from app.config import Settings
 from app.db import get_repo_connection
 from app.index.store import index_file, naive_chunk_text
 from app.ingest.walker import DiscoveredFile, walk_repo
 from app.providers.embeddings import FakeEmbeddingProvider
+
+from .conftest import make_settings
 
 
 def _discovered(path: str, text: str, *, is_test: bool = False) -> DiscoveredFile:
@@ -52,7 +53,7 @@ def test_naive_chunk_text_large_text_overlaps_and_covers_whole_file():
 
 
 def test_index_file_is_idempotent(tmp_path: Path):
-    settings = Settings(data_dir=tmp_path / "data", embedding_provider="fake")
+    settings = make_settings(tmp_path)
     conn = get_repo_connection("repo1", FakeEmbeddingProvider().dim, settings)
 
     discovered = _discovered("src/a.py", "def f():\n    return 1\n")
@@ -72,7 +73,7 @@ def test_index_file_is_idempotent(tmp_path: Path):
 
 
 def test_index_file_replaces_chunks_and_vectors_on_change(tmp_path: Path):
-    settings = Settings(data_dir=tmp_path / "data", embedding_provider="fake")
+    settings = make_settings(tmp_path)
     provider = FakeEmbeddingProvider()
     conn = get_repo_connection("repo1", provider.dim, settings)
 
@@ -101,7 +102,7 @@ def test_index_file_replaces_chunks_and_vectors_on_change(tmp_path: Path):
 
 
 def test_index_file_from_real_walker(mini_repo_path: Path, tmp_path: Path):
-    settings = Settings(data_dir=tmp_path / "data", embedding_provider="fake")
+    settings = make_settings(tmp_path)
     conn = get_repo_connection("repo1", FakeEmbeddingProvider().dim, settings)
 
     kept, _ = walk_repo(mini_repo_path)

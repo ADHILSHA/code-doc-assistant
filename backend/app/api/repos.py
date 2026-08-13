@@ -16,6 +16,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from app.config import Settings, get_settings
 from app.db import get_registry_connection
+from app.ingest.source import classify_source
 from app.jobs import create_repo_and_job, run_index_job
 from app.models import JobOut, RepoCreateRequest, RepoCreateResponse, RepoOut
 from app.util import now_iso
@@ -75,6 +76,13 @@ def create_repo(
     background_tasks: BackgroundTasks,
     settings: Settings = Depends(get_settings),
 ) -> RepoCreateResponse:
+    if classify_source(body.source) == "local" and not settings.allow_local_repos:
+        raise HTTPException(
+            400,
+            "Local paths are disabled (ALLOW_LOCAL_REPOS is not set) — "
+            "pass a GitHub URL, or set ALLOW_LOCAL_REPOS=true in backend/.env "
+            "if you're running this as a trusted single-user local tool.",
+        )
     repo_id, job_id = create_repo_and_job(body.source, settings)
     background_tasks.add_task(run_index_job, job_id, repo_id, body.source, settings)
     return RepoCreateResponse(repo_id=repo_id, job_id=job_id)
