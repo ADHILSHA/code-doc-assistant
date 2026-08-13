@@ -102,6 +102,19 @@ REPO_MIGRATIONS: list[str] = [
       created_at TEXT
     );
     """,
+    # v2 (Phase 1) — lexical index (index/lexical.py), keyed by chunk id as
+    # rowid. NOT contentless (deviates from SPEC.md §4's `content=''`) — see
+    # DECISIONS.md: contentless FTS5 tables can't be deleted from by rowid
+    # alone (confirmed by testing, not by inspection), only via a special
+    # command re-supplying the exact original indexed values, which would
+    # push real coupling into index/store.py's chunk-replacement path for a
+    # storage micro-optimization that doesn't matter at this scale.
+    """
+    CREATE VIRTUAL TABLE chunks_fts USING fts5(
+      content, symbol_name, path,
+      tokenize='unicode61 remove_diacritics 0'
+    );
+    """,
 ]
 
 

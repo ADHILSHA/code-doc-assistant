@@ -53,27 +53,41 @@ class LLMProvider(Protocol):
 
 
 class FakeLLMProvider:
-    """Deterministic, zero-network provider for tests. Synthesizes an answer
-    that cites the first `[path:start-end]`-shaped reference found in the
-    prompt, so tests can assert the citation plumbing works end-to-end
-    without a real model call.
+    """Deterministic, zero-network provider for tests. By default,
+    synthesizes an answer that cites the first `[path:start-end]`-shaped
+    reference found in the prompt, so tests can assert the citation
+    plumbing works end-to-end without a real model call. Pass `responses`
+    to script exact multi-turn behavior instead (e.g. testing citations.py's
+    regenerate-once path: a first call returning a bad citation, a second
+    returning a good one) — one list entry popped per `complete`/`stream`
+    call.
     """
 
     model = "fake-llm"
 
+    def __init__(self, responses: list[str] | None = None) -> None:
+        self._responses = list(responses) if responses is not None else None
+
     def complete(
         self, *, system: str, messages: list[dict[str, str]], max_tokens: int = 1024
     ) -> LLMResponse:
-        text = self._answer(messages)
+        text = self._next_answer(messages)
         return LLMResponse(text=text, usage=self._usage(system, messages, text))
 
     def stream(
         self, *, system: str, messages: list[dict[str, str]], max_tokens: int = 1024
     ) -> Iterator[str | LLMUsage]:
-        text = self._answer(messages)
+        text = self._next_answer(messages)
         for word in text.split(" "):
             yield word + " "
         yield self._usage(system, messages, text)
+
+    def _next_answer(self, messages: list[dict[str, str]]) -> str:
+        if self._responses is not None:
+            if not self._responses:
+                raise AssertionError("FakeLLMProvider ran out of scripted responses")
+            return self._responses.pop(0)
+        return self._answer(messages)
 
     def complete_with_tools(
         self,

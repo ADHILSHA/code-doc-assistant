@@ -1,9 +1,5 @@
 """File discovery: walk a repo root, apply filters.py, yield DiscoveredFile
 records ready for `index/store.py` to persist and chunk.
-
-Language detection here is a small, naive extension map — good enough for
-Phase 0's `files.language` column. Phase 1's `parsing/languages.py` (which
-also drives tree-sitter grammar selection) supersedes it.
 """
 
 from __future__ import annotations
@@ -14,22 +10,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.ingest.filters import evaluate_file, load_gitignore, should_skip_dir
+from app.parsing.languages import detect_language
 
-_EXTENSION_LANGUAGE = {
-    ".py": "python",
-    ".js": "javascript",
-    ".jsx": "javascript",
-    ".mjs": "javascript",
-    ".cjs": "javascript",
-    ".ts": "typescript",
-    ".tsx": "tsx",
-    ".go": "go",
-    ".java": "java",
-    ".rs": "rust",
-    ".rb": "ruby",
-    ".md": "markdown",
-    ".markdown": "markdown",
-}
+__all__ = ["DiscoveredFile", "SkippedFile", "detect_language", "walk_repo"]
 
 
 @dataclass(frozen=True)
@@ -47,10 +30,6 @@ class DiscoveredFile:
 class SkippedFile:
     path: str
     reason: str
-
-
-def detect_language(path: str) -> str | None:
-    return _EXTENSION_LANGUAGE.get(Path(path).suffix.lower())
 
 
 def walk_repo(

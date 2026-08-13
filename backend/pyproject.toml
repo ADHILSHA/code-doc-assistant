@@ -17,6 +17,8 @@ dependencies = [
   "sqlite-vec>=0.1.6",
   "sse-starlette>=2.1",
   "pathspec>=0.12",
+  "tree-sitter>=0.23",
+  "tree-sitter-language-pack>=1.0",
 ]
 
 [project.optional-dependencies]

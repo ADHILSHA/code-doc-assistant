@@ -64,6 +64,17 @@ class QueryRequest(BaseModel):
     session_id: str | None = None
 
 
+# --- /api/repos/{id}/file ---
+
+
+class FileSliceResponse(BaseModel):
+    path: str
+    language: str | None = None
+    start_line: int
+    end_line: int
+    lines: list[str]
+
+
 # --- internal: retrieval / generation ---
 
 

@@ -1,12 +1,9 @@
-"""Phase 0 naive chunker + writes to `files`/`chunks`.
-
-Fixed ~1500-char windows with 200-char overlap (SPEC.md §6 Phase 0 task 4).
-Replaced by tree-sitter AST-aware chunking in Phase 1 (`parsing/chunker.py`);
-kept intentionally simple here since it's throwaway.
+"""Chunking (via parsing/chunker.py) + writes to `files`/`chunks`/`chunks_fts`.
 
 Idempotency: `index_file` keys off `files.path` + `content_hash`. Re-running
 on an unchanged file is a no-op (existing chunk rows are reused, not
-duplicated); a changed file has its old chunks deleted and replaced.
+duplicated); a changed file has its old chunks — and their lexical-index
+and vector rows — deleted and replaced.
 """
 
 from __future__ import annotations
@@ -14,7 +11,10 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
+from app.index import lexical
 from app.ingest.walker import DiscoveredFile
+from app.parsing.chunker import chunk_file
+from app.parsing.imports import extract_imports
 
 
 @dataclass(frozen=True)
@@ -22,41 +22,33 @@ class FileIndexResult:
     file_id: int
     chunk_ids: list[int]
     changed: bool  # False => file was already indexed with identical content, nothing rewritten
+    # "ast" | "markdown" | "naive" for a (re)chunked file; None if `changed`
+    # is False (nothing was rechunked, so there's no strategy to report).
+    chunking_strategy: str | None
 
 
-def naive_chunk_text(
-    text: str, *, size: int = 1500, overlap: int = 200
-) -> list[tuple[int, int, str]]:
-    """Split `text` into fixed-size character windows with overlap. Returns
-    (start_line, end_line, content) tuples, 1-indexed inclusive line numbers.
-    """
-    if not text:
-        return []
-    n = len(text)
-
-    def line_at(idx: int) -> int:
-        """1-indexed line number containing character index `idx` (0 <= idx < n)."""
-        return text.count("\n", 0, idx) + 1
-
-    if n <= size:
-        return [(1, line_at(n - 1), text)]
-
-    step = max(size - overlap, 1)
-    windows: list[tuple[int, int, str]] = []
-    pos = 0
-    while pos < n:
-        end = min(pos + size, n)
-        # `end - 1` (not `end`): `end` is an exclusive slice bound, so the
-        # line number we want is that of the last character actually
-        # included in the window.
-        windows.append((line_at(pos), line_at(end - 1), text[pos:end]))
-        if end == n:
-            break
-        pos += step
-    return windows
+def _build_header(path: str, parent_symbol: str | None, imports: list[str]) -> str:
+    """SPEC.md §6 Phase 1 task 1: "# path/to/file.py | class UserService |
+    imports: fastapi, sqlalchemy" — injected context prepended before
+    embedding, stored separately from `content` so it's never shown to the
+    user as code."""
+    parts = [f"# {path}"]
+    if parent_symbol:
+        parts.append(f"class {parent_symbol}")
+    if imports:
+        parts.append(f"imports: {', '.join(imports)}")
+    return " | ".join(parts)
 
 
-def index_file(conn: sqlite3.Connection, discovered: DiscoveredFile) -> FileIndexResult:
+def index_file(
+    conn: sqlite3.Connection,
+    discovered: DiscoveredFile,
+    *,
+    max_tokens: int = 800,
+    overlap_statements: int = 1,
+    naive_size: int = 1500,
+    naive_overlap: int = 200,
+) -> FileIndexResult:
     row = conn.execute(
         "SELECT id, content_hash FROM files WHERE path = ?", (discovered.path,)
     ).fetchone()
@@ -68,7 +60,9 @@ def index_file(conn: sqlite3.Connection, discovered: DiscoveredFile) -> FileInde
                 "SELECT id FROM chunks WHERE file_id = ? ORDER BY id", (row["id"],)
             )
         ]
-        return FileIndexResult(file_id=row["id"], chunk_ids=unchanged_chunk_ids, changed=False)
+        return FileIndexResult(
+            file_id=row["id"], chunk_ids=unchanged_chunk_ids, changed=False, chunking_strategy=None
+        )
 
     if row is not None:
         file_id = row["id"]
@@ -84,8 +78,8 @@ def index_file(conn: sqlite3.Connection, discovered: DiscoveredFile) -> FileInde
                 file_id,
             ),
         )
-        # Drop stale vectors for the chunks we're about to replace too, so a
-        # content change doesn't leave orphaned rows in chunk_vectors.
+        # Drop stale vectors and lexical-index rows for the chunks we're
+        # about to replace too, so a content change doesn't leave orphans.
         # (Cleanup for files removed from the repo entirely — vs. changed —
         # is Phase 4's incremental-reindex job.)
         old_chunk_ids = [
@@ -97,6 +91,8 @@ def index_file(conn: sqlite3.Connection, discovered: DiscoveredFile) -> FileInde
             conn.execute(
                 f"DELETE FROM chunk_vectors WHERE chunk_id IN ({placeholders})", old_chunk_ids
             )
+            for old_id in old_chunk_ids:
+                lexical.delete_chunk(conn, old_id)
     else:
         cur = conn.execute(
             "INSERT INTO files (path, language, content_hash, size_bytes, loc, is_test) "
@@ -113,17 +109,43 @@ def index_file(conn: sqlite3.Connection, discovered: DiscoveredFile) -> FileInde
         file_id = cur.lastrowid
         assert file_id is not None
 
-    header = f"# {discovered.path}"
+    result = chunk_file(
+        discovered.text,
+        discovered.language,
+        max_tokens=max_tokens,
+        overlap_statements=overlap_statements,
+        naive_size=naive_size,
+        naive_overlap=naive_overlap,
+    )
+    imports = extract_imports(discovered.text, discovered.language)
+
     chunk_ids: list[int] = []
-    for start_line, end_line, content in naive_chunk_text(discovered.text):
+    for c in result.chunks:
+        header = _build_header(discovered.path, c.parent_symbol, imports)
         cur = conn.execute(
             "INSERT INTO chunks "
             "(file_id, symbol_name, symbol_kind, parent_symbol, start_line, end_line, "
             " header, content, token_count) "
-            "VALUES (?, NULL, 'module', NULL, ?, ?, ?, ?, ?)",
-            (file_id, start_line, end_line, header, content, max(1, len(content) // 4)),
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                file_id,
+                c.symbol_name,
+                c.symbol_kind,
+                c.parent_symbol,
+                c.start_line,
+                c.end_line,
+                header,
+                c.content,
+                max(1, len(c.content) // 4),
+            ),
         )
         assert cur.lastrowid is not None
-        chunk_ids.append(cur.lastrowid)
+        chunk_id = cur.lastrowid
+        chunk_ids.append(chunk_id)
+        lexical.index_chunk(
+            conn, chunk_id, content=c.content, symbol_name=c.symbol_name, path=discovered.path
+        )
 
-    return FileIndexResult(file_id=file_id, chunk_ids=chunk_ids, changed=True)
+    return FileIndexResult(
+        file_id=file_id, chunk_ids=chunk_ids, changed=True, chunking_strategy=result.strategy
+    )

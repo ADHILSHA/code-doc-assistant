@@ -27,3 +27,14 @@ def build_context_block(chunks: list[RetrievedChunk]) -> str:
 
 def build_user_message(question: str, context_block: str) -> str:
     return f"Context from the codebase:\n\n{context_block}\n\n---\n\nQuestion: {question}"
+
+
+# Phase 1 citation verification (generation/citations.py): appended as a
+# follow-up turn when a claim's only citation(s) turned out invalid, to
+# regenerate the answer once (SPEC.md §6 Phase 1 task 4).
+REGENERATION_NOTE = """Your previous answer included a claim whose citation could not be \
+verified against the actual codebase (the cited file or line range doesn't exist). Answer the \
+question again, using ONLY citations you can support with the exact context blocks provided \
+earlier — every [path:START-END] you write must copy a line range verbatim from one of those \
+context blocks. If part of the answer can't be backed by the provided context, say so plainly \
+instead of citing something unverifiable."""

@@ -51,12 +51,24 @@ class Settings(BaseSettings):
     voyage_embedding_model: str = "voyage-code-3"
     openai_embedding_model: str = "text-embedding-3-small"
 
-    # --- Chunking (Phase 0: naive fixed-size windows; replaced in Phase 1) ---
+    # --- Chunking ---
+    # Naive fixed-size windows — the Phase 0 splitter, kept as the fallback
+    # for unsupported languages / unparseable files (parsing/chunker.py).
     chunk_size_chars: int = 1500
     chunk_overlap_chars: int = 200
+    # AST-aware chunking (Phase 1): functions over this estimated token
+    # count get split on statement boundaries, with this many statements
+    # of overlap between consecutive splits (SPEC.md §6 Phase 1 task 1).
+    chunk_max_tokens: int = 800
+    chunk_overlap_statements: int = 1
 
-    # --- Retrieval (Phase 0: dense-only top-k; hybrid fusion arrives Phase 1) ---
+    # --- Retrieval ---
     top_k_dense: int = 10
+    # Hybrid fusion (Phase 1): BM25 + dense, fused with Reciprocal Rank
+    # Fusion (SPEC.md §6 Phase 1 task 3).
+    top_k_lexical: int = 10
+    rrf_k: int = 60
+    hybrid_top_n: int = 30
 
     # --- Cost / performance guardrails (SPEC.md §7.4-7.5) ---
     max_chunks_per_repo: int = 50_000

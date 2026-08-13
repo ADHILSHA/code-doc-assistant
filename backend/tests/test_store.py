@@ -1,55 +1,28 @@
 from __future__ import annotations
 
 import hashlib
-from itertools import pairwise
 from pathlib import Path
 
 import sqlite_vec
 
 from app.db import get_repo_connection
-from app.index.store import index_file, naive_chunk_text
+from app.index.store import index_file
 from app.ingest.walker import DiscoveredFile, walk_repo
 from app.providers.embeddings import FakeEmbeddingProvider
 
 from .conftest import make_settings
 
 
-def _discovered(path: str, text: str, *, is_test: bool = False) -> DiscoveredFile:
+def _discovered(path: str, text: str, *, language: str = "python", is_test: bool = False) -> DiscoveredFile:
     return DiscoveredFile(
         path=path,
-        language="python",
+        language=language,
         content_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
         size_bytes=len(text.encode("utf-8")),
         loc=len(text.splitlines()),
         is_test=is_test,
         text=text,
     )
-
-
-def test_naive_chunk_text_small_text_single_chunk():
-    text = "line1\nline2\nline3\n"
-    chunks = naive_chunk_text(text, size=1500, overlap=200)
-    assert len(chunks) == 1
-    start_line, end_line, content = chunks[0]
-    assert start_line == 1
-    assert end_line == text.count("\n")  # 3 newline-terminated lines, no trailing phantom line
-    assert content == text
-
-
-def test_naive_chunk_text_empty():
-    assert naive_chunk_text("") == []
-
-
-def test_naive_chunk_text_large_text_overlaps_and_covers_whole_file():
-    text = "".join(f"line {i}\n" for i in range(1000))  # well over 1500 chars
-    chunks = naive_chunk_text(text, size=1500, overlap=200)
-    assert len(chunks) > 1
-    # Every window after the first should start before the previous one ends
-    # (i.e. there is overlap), and the last window reaches the final line.
-    for (_, e1, _), (s2, _, _) in pairwise(chunks):
-        assert s2 <= e1
-    total_lines = text.count("\n")
-    assert chunks[-1][1] == total_lines
 
 
 def test_index_file_is_idempotent(tmp_path: Path):
@@ -60,10 +33,12 @@ def test_index_file_is_idempotent(tmp_path: Path):
 
     first = index_file(conn, discovered)
     assert first.changed is True
+    assert first.chunking_strategy == "ast"
     assert len(first.chunk_ids) >= 1
 
     second = index_file(conn, discovered)
     assert second.changed is False
+    assert second.chunking_strategy is None
     assert second.chunk_ids == first.chunk_ids
 
     file_count = conn.execute("SELECT COUNT(*) AS n FROM files").fetchone()["n"]
@@ -72,20 +47,22 @@ def test_index_file_is_idempotent(tmp_path: Path):
     assert chunk_count == len(first.chunk_ids)
 
 
-def test_index_file_replaces_chunks_and_vectors_on_change(tmp_path: Path):
+def test_index_file_replaces_chunks_vectors_and_lexical_rows_on_change(tmp_path: Path):
     settings = make_settings(tmp_path)
     provider = FakeEmbeddingProvider()
     conn = get_repo_connection("repo1", provider.dim, settings)
 
     v1 = _discovered("src/a.py", "def f():\n    return 1\n")
     result1 = index_file(conn, v1)
-    # Pretend this chunk got embedded.
+    # Pretend these chunks got embedded and lexically indexed.
     for chunk_id in result1.chunk_ids:
         conn.execute(
             "INSERT INTO chunk_vectors (chunk_id, embedding) VALUES (?, ?)",
             (chunk_id, sqlite_vec.serialize_float32(provider.embed_query("x"))),
         )
     conn.commit()
+    fts_count_before = conn.execute("SELECT COUNT(*) AS n FROM chunks_fts").fetchone()["n"]
+    assert fts_count_before == len(result1.chunk_ids)
 
     v2 = _discovered("src/a.py", "def f():\n    return 2\n\ndef g():\n    return 3\n")
     result2 = index_file(conn, v2)
@@ -100,6 +77,9 @@ def test_index_file_replaces_chunks_and_vectors_on_change(tmp_path: Path):
     ).fetchone()["n"]
     assert remaining_old_vectors == 0
 
+    fts_count_after = conn.execute("SELECT COUNT(*) AS n FROM chunks_fts").fetchone()["n"]
+    assert fts_count_after == len(result2.chunk_ids)
+
 
 def test_index_file_from_real_walker(mini_repo_path: Path, tmp_path: Path):
     settings = make_settings(tmp_path)
@@ -109,9 +89,40 @@ def test_index_file_from_real_walker(mini_repo_path: Path, tmp_path: Path):
     by_path = {f.path: f for f in kept}
     result = index_file(conn, by_path["src/users/service.py"])
     assert result.changed
+    assert result.chunking_strategy == "ast"
     assert len(result.chunk_ids) >= 1
 
-    row = conn.execute(
-        "SELECT content FROM chunks WHERE id = ?", (result.chunk_ids[0],)
-    ).fetchone()
-    assert "get_user_by_id" in row["content"] or "UserService" in row["content"]
+    rows = conn.execute(
+        f"SELECT symbol_name, content FROM chunks WHERE id IN "
+        f"({','.join('?' for _ in result.chunk_ids)})",
+        result.chunk_ids,
+    ).fetchall()
+    assert any(r["symbol_name"] == "get_user_by_id" for r in rows)
+
+
+def test_index_file_header_includes_path_and_class(mini_repo_path: Path, tmp_path: Path):
+    settings = make_settings(tmp_path)
+    conn = get_repo_connection("repo1", FakeEmbeddingProvider().dim, settings)
+
+    kept, _ = walk_repo(mini_repo_path)
+    by_path = {f.path: f for f in kept}
+    result = index_file(conn, by_path["src/users/service.py"])
+
+    rows = conn.execute(
+        f"SELECT symbol_name, parent_symbol, header FROM chunks WHERE id IN "
+        f"({','.join('?' for _ in result.chunk_ids)})",
+        result.chunk_ids,
+    ).fetchall()
+    method_row = next(r for r in rows if r["symbol_name"] == "get_user_by_id")
+    assert "src/users/service.py" in method_row["header"]
+    assert method_row["parent_symbol"] == "UserService"
+    assert "UserService" in method_row["header"]
+
+
+def test_index_file_naive_fallback_for_unsupported_language(tmp_path: Path):
+    settings = make_settings(tmp_path)
+    conn = get_repo_connection("repo1", FakeEmbeddingProvider().dim, settings)
+
+    discovered = _discovered("src/a.php", "<?php\nfunction foo() { return 1; }\n", language="php")
+    result = index_file(conn, discovered)
+    assert result.chunking_strategy == "naive"

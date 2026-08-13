@@ -15,6 +15,7 @@ from sse_starlette.sse import EventSourceResponse
 from app.config import Settings, get_settings
 from app.db import get_registry_connection, get_repo_connection
 from app.generation.answer import generate_answer_events
+from app.generation.citations import RepoContext
 from app.models import QueryRequest
 from app.providers.embeddings import EmbeddingProvider, get_embedding_provider
 from app.providers.llm import LLMProvider, get_llm_provider
@@ -75,12 +76,22 @@ def query(
     llm_provider: LLMProvider = Depends(llm_provider_dependency),
 ) -> EventSourceResponse:
     row = registry_conn.execute(
-        "SELECT status FROM repos WHERE id = ?", (body.repo_id,)
+        "SELECT status, source_type, display_name, commit_sha FROM repos WHERE id = ?",
+        (body.repo_id,),
     ).fetchone()
     if row is None:
         raise HTTPException(404, "repo not found")
     if row["status"] != "ready":
         raise HTTPException(409, f"repo is not ready (status={row['status']})")
+
+    # display_name is already "owner/repo" for github source_type — set
+    # that way at clone time (ingest/source.py::_clone_github) — so there's
+    # no need to re-parse the source URL here just to build a permalink.
+    repo_context = RepoContext(
+        source_type=row["source_type"],
+        owner_repo=row["display_name"] if row["source_type"] == "github" else None,
+        commit_sha=row["commit_sha"],
+    )
 
     try:
         repo_conn = get_repo_connection(body.repo_id, embedding_provider.dim, settings)
@@ -90,7 +101,12 @@ def query(
     def event_stream() -> Iterator[dict]:
         try:
             yield from generate_answer_events(
-                repo_conn, settings, embedding_provider, llm_provider, question=body.question
+                repo_conn,
+                settings,
+                embedding_provider,
+                llm_provider,
+                repo_context,
+                question=body.question,
             )
         finally:
             repo_conn.close()

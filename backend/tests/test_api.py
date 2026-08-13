@@ -3,6 +3,7 @@ check the SSE contract. All providers are faked — zero network calls."""
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -30,6 +31,23 @@ def _make_client(tmp_path: Path, *, settings: Settings | None = None) -> tuple[T
     app.dependency_overrides[embedding_provider_dependency] = lambda: FakeEmbeddingProvider()
     app.dependency_overrides[llm_provider_dependency] = lambda: FakeLLMProvider()
     return TestClient(app), settings
+
+
+def _parse_sse_events(raw_lines: list[str]) -> list[tuple[str, dict]]:
+    """Pairs each `event: X` line with its following `data: {...}` line —
+    the format sse-starlette actually emits."""
+    events: list[tuple[str, dict]] = []
+    i = 0
+    while i < len(raw_lines):
+        line = raw_lines[i]
+        if line.startswith("event:") and i + 1 < len(raw_lines) and raw_lines[i + 1].startswith("data:"):
+            name = line[len("event:") :].strip()
+            payload = json.loads(raw_lines[i + 1][len("data:") :].strip())
+            events.append((name, payload))
+            i += 2
+        else:
+            i += 1
+    return events
 
 
 def _wait_for_job(client: TestClient, job_id: str, *, timeout: float = 10.0) -> dict:
@@ -73,9 +91,18 @@ def test_end_to_end_index_and_query(mini_repo_path: Path, tmp_path: Path):
     assert "event: token" in joined
     assert "event: citations" in joined
     assert "event: done" in joined
-    # The naive retrieval + fake LLM pipeline should surface a real file path
-    # somewhere in the source/citation trail (Phase 0 acceptance criterion).
-    assert ".py" in joined or ".ts" in joined or ".md" in joined
+
+    # Phase 1 acceptance criterion: "100% of returned citations resolve to
+    # real, in-bounds line ranges" — checked against the actual fixture
+    # files on disk, not just that the event fired.
+    sse_events = _parse_sse_events(events)
+    citations_payloads = [data["citations"] for name, data in sse_events if name == "citations"]
+    assert citations_payloads and citations_payloads[0], "expected at least one citation"
+    for citation in citations_payloads[0]:
+        file_path = mini_repo_path / citation["path"]
+        assert file_path.is_file(), f"citation references a nonexistent file: {citation['path']}"
+        total_lines = len(file_path.read_text().splitlines())
+        assert 1 <= citation["start_line"] <= citation["end_line"] <= total_lines, citation
 
 
 def test_repos_list_and_delete(mini_repo_path: Path, tmp_path: Path):

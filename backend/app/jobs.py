@@ -78,9 +78,21 @@ def run_index_job(job_id: str, repo_id: str, source: str, settings: Settings | N
             total_chunks_written = 0
             pending_embeddings: list[tuple[int, str]] = []
             total_files = len(kept)
+            # Which chunking strategy each (re)chunked file used, and which
+            # languages fell back to the naive splitter — SPEC.md §6 Phase 1
+            # task 1: "log which languages fell back".
+            chunking_counts: dict[str, int] = {}
+            fallback_languages: set[str] = set()
 
             for idx, discovered in enumerate(kept):
-                result = index_file(repo_conn, discovered)
+                result = index_file(
+                    repo_conn,
+                    discovered,
+                    max_tokens=settings.chunk_max_tokens,
+                    overlap_statements=settings.chunk_overlap_statements,
+                    naive_size=settings.chunk_size_chars,
+                    naive_overlap=settings.chunk_overlap_chars,
+                )
                 total_chunks_written += len(result.chunk_ids)
 
                 if total_chunks_written > settings.max_chunks_per_repo:
@@ -88,6 +100,13 @@ def run_index_job(job_id: str, repo_id: str, source: str, settings: Settings | N
                         f"Repo exceeds MAX_CHUNKS_PER_REPO ({settings.max_chunks_per_repo}); "
                         "refusing to index further"
                     )
+
+                if result.chunking_strategy is not None:
+                    chunking_counts[result.chunking_strategy] = (
+                        chunking_counts.get(result.chunking_strategy, 0) + 1
+                    )
+                    if result.chunking_strategy == "naive" and discovered.language:
+                        fallback_languages.add(discovered.language)
 
                 if result.changed and result.chunk_ids:
                     placeholders = ",".join("?" for _ in result.chunk_ids)
@@ -123,6 +142,8 @@ def run_index_job(job_id: str, repo_id: str, source: str, settings: Settings | N
                 "chunks": total_chunks_written,
                 "chunks_embedded": len(pending_embeddings),
                 "languages": sorted({f.language for f in kept if f.language}),
+                "chunking": chunking_counts,
+                "fallback_languages": sorted(fallback_languages),
             }
         finally:
             repo_conn.close()
