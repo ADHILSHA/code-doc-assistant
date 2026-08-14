@@ -45,10 +45,36 @@ cp .env.example backend/.env   # fill in at least ANTHROPIC_API_KEY + an embeddi
 docker compose up --build
 ```
 
-- Frontend: http://localhost:8080 (nginx serves the built SPA and reverse-proxies `/api` to the backend container — see `frontend/nginx.conf`)
+- Frontend: http://localhost:8080 (nginx serves the built SPA and reverse-proxies `/api` to the backend container — see `frontend/nginx.conf.template`)
 - Backend (direct, for `curl`/debugging): http://localhost:8000
 - Indexed repos, embeddings, and clones persist in the `data` named volume across restarts.
 - `ALLOW_LOCAL_REPOS` is forced to `false` in `docker-compose.yml` regardless of `backend/.env` — a "local path" inside the container isn't something a caller outside it can usefully point at (see [Security](#security) below).
+
+### Option C: Railway
+
+Both `backend/Dockerfile` and `frontend/Dockerfile` deploy as-is to
+[Railway](https://railway.app) — but Railway doesn't read
+`docker-compose.yml` at all; each service is added and configured
+independently. Concretely:
+
+1. **Push this repo to GitHub** (Railway deploys from a GitHub repo, not a local directory).
+2. **New Project → Deploy from GitHub repo**, select this repo. Railway creates one service from it — this becomes the backend.
+   - Service **Settings → Source → Root Directory**: `backend` (so Railway finds `backend/Dockerfile`).
+   - **Variables**: at minimum `ANTHROPIC_API_KEY`, `EMBEDDING_PROVIDER` + its matching key (`VOYAGE_API_KEY` or `OPENAI_API_KEY`), and `CREDENTIAL_ENCRYPTION_KEY` (generate with the one-liner in [Environment variables](#environment-variables) — needed before the PAT UI will work, not before the app starts). Leave `ALLOW_LOCAL_REPOS` unset (defaults to `false`, and should stay that way here — see [Security](#security)). Don't set `PORT` yourself — Railway injects it per-deployment and `backend/Dockerfile`'s `CMD` already reads it.
+   - **Settings → Volumes → New Volume**, mount path `/app/data` — without this, every redeploy starts with an empty index (Railway's container filesystem doesn't persist across deploys).
+   - **Settings → Networking → Generate Domain** — copy the resulting URL (e.g. `https://backend-production-xxxx.up.railway.app`); the frontend needs it next.
+3. **Add a second service** in the same project, from the same repo.
+   - Root Directory: `frontend`.
+   - **Variables**: `BACKEND_INTERNAL_URL` = the backend's public URL from step 2 (no trailing slash). This is what `frontend/nginx.conf.template` reverse-proxies `/api` to — see that file's header comment for why this uses the backend's *public* URL rather than Railway's private inter-service networking (short version: private networking there is IPv6-only, and a real test against a Linux container showed binding this app's socket for dual-stack IPv4+IPv6 doesn't reliably work the way it's commonly assumed to — simpler and actually-verified to proxy to the public URL instead, which is still a server-side call, so the browser never makes a cross-origin request either way and CORS stays a non-issue).
+   - **Settings → Networking → Generate Domain** — this is the URL you actually visit.
+4. *(Optional, defense-in-depth — not required for the app to work, since the browser never talks to the backend directly in this setup)* set the backend's `FRONTEND_ORIGIN` to the frontend's public URL from step 3.
+5. Wait for both services to finish building/deploying, then open the frontend's URL. Only GitHub URLs can be indexed here (`ALLOW_LOCAL_REPOS=false`) — expected, see [Security](#security).
+
+Both `backend/Dockerfile` and `frontend/Dockerfile`'s `CMD`/nginx config
+read their listen port from Railway's `PORT` env var rather than a
+hardcoded one — verified by overriding it locally (`docker run -e
+PORT=9091 ...`) and confirming each service actually starts listening on
+the overridden port, not just accepting the variable.
 
 ### Option B: run locally (no Docker)
 

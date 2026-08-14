@@ -1,0 +1,76 @@
+# Serves the built SPA and reverse-proxies /api to the backend, mirroring
+# what vite.config.ts's dev-server proxy does for `npm run dev` (SPEC.md §6
+# Phase 5 task 5). Since the browser only ever talks to *this* origin,
+# there's no cross-origin request here at all — backend's CORS
+# (FRONTEND_ORIGIN) is irrelevant to this deployment path, same as in dev.
+#
+# `.template` + /etc/nginx/templates/: envsubst'd into /etc/nginx/conf.d/
+# at container *start* by the official nginx image's built-in entrypoint
+# (see Dockerfile) — both variables below are only known at deploy time,
+# not image-build time:
+#   PORT                 the port *this* container must listen on.
+#     docker-compose.yml: fixed at 80 (Dockerfile's ENV default).
+#     Railway: assigns a random port per deployment via the PORT env var
+#     (spelled out here, not as a literal token, since envsubst rewrites
+#     *every* `${PORT}`/`$PORT`-shaped token in this file at container
+#     start — including inside comments, found by actually inspecting the
+#     generated /etc/nginx/conf.d/default.conf) — binding to a hardcoded
+#     port would silently not be reachable.
+#   BACKEND_INTERNAL_URL  scheme://host:port of the backend, no path, no
+#                         trailing slash.
+#     docker-compose.yml: http://backend:8000 (Dockerfile's ENV default —
+#     "backend" resolves via Docker's embedded DNS, matching the compose
+#     service name).
+#     Railway: the backend service's public HTTPS URL (e.g.
+#     https://backend-production-xxxx.up.railway.app) — see README's
+#     Railway section for why this uses the backend's *public* URL rather
+#     than Railway's private inter-service networking (short version:
+#     private networking there is IPv6-only and requires binding this
+#     app's socket to `::`, which a real test against a Linux container
+#     showed does *not* reliably behave as dual-stack — simpler and
+#     verified-working to just proxy to the public URL instead, still
+#     entirely server-side so the browser never makes a cross-origin
+#     request either way).
+# A literal, unresolvable hostname baked directly into this file (instead
+# of templated) would make nginx fail at startup the moment it's deployed
+# somewhere that hostname doesn't resolve — found by working through
+# exactly that failure mode for a Railway deployment, not by inspection.
+server {
+    listen ${PORT};
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # SPA fallback: any path not matching a real file goes to index.html
+    # so client-side routing (none today, but harmless either way) and a
+    # hard refresh on a deep link both work.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass ${BACKEND_INTERNAL_URL}/api/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Only takes effect when BACKEND_INTERNAL_URL is https:// (Railway
+        # — see header comment): nginx doesn't send SNI on a proxied HTTPS
+        # upstream by default, and a platform that virtual-hosts multiple
+        # services behind shared edge IPs via SNI (Railway does) needs it
+        # to route to the right one. A no-op for a plain http:// upstream
+        # (docker-compose), safe to leave on unconditionally.
+        proxy_ssl_server_name on;
+
+        # /api/query is a streamed SSE response (SPEC.md §5) — buffering
+        # would hold the whole response until it's complete or a buffer
+        # fills, defeating token-by-token streaming; chunked_transfer_encoding
+        # off avoids nginx re-chunking a stream that's already framed as
+        # SSE events. Read timeout generous enough for a full agent-loop
+        # turn (see backend Settings.long_request_timeout_seconds default).
+        proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding off;
+        proxy_read_timeout 130s;
+    }
+}

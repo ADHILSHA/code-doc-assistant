@@ -53,8 +53,16 @@ ENV PATH="/venv/bin:$PATH" \
 # image is run standalone without it. Must be an absolute, writable path;
 # config.py's own default (relative to app/config.py's location) resolves
 # to somewhere under /app otherwise, which isn't where the shared volume
-# in docker-compose.yml is mounted.
+# in docker-compose.yml (or a Railway volume — see README's Railway
+# section) is mounted.
 ENV DATA_DIR=/app/data
 
+# Railway (and most PaaS container platforms) assign a random port per
+# deployment via $PORT and expect the process to bind to it — there's no
+# fixed port to hardcode. Defaults to 8000 (matching docker-compose.yml
+# and EXPOSE below) when unset, so this same image behaves identically
+# under plain `docker run` / docker-compose. Shell form (not exec-form
+# CMD array) is required for `$PORT` to actually expand.
+ENV PORT=8000
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD uvicorn app.main:app --host 0.0.0.0 --port "$PORT"
