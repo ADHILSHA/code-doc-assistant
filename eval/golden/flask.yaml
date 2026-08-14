@@ -1,0 +1,144 @@
+# Golden question set for pallets/flask (SPEC.md §6 Phase 4 task 1, §8's
+# first recommended real test repo). Ground truth verified directly against
+# a real shallow clone (flask 3.2.0.dev, main branch) — not guessed from
+# memory. Note the routing internals live in src/flask/sansio/app.py (a
+# 3.1+ refactor split Flask's App class into a transport-agnostic "sansio"
+# base + a WSGI-specific src/flask/app.py subclass) — SPEC.md's own
+# illustrative example question ("Where is the routing table built?" ->
+# src/flask/app.py) predates that refactor; the correct current answer is
+# sansio/app.py, which is what's used below. 4 questions per route, 20 total.
+
+# --- locate ---
+
+- id: flask-locate-001
+  question: "Where is the Flask class defined?"
+  route: locate
+  expected_files: ["src/flask/app.py"]
+  expected_substrings: ["class Flask"]
+
+- id: flask-locate-002
+  question: "Where is add_url_rule defined?"
+  route: locate
+  expected_files: ["src/flask/sansio/app.py"]
+  expected_substrings: ["add_url_rule"]
+  notes: "add_url_rule also exists on Blueprint (sansio/blueprints.py) and Scaffold (sansio/scaffold.py) — the App-level definition in sansio/app.py is the primary one expected here"
+
+- id: flask-locate-003
+  question: "Where is the Config class defined?"
+  route: locate
+  expected_files: ["src/flask/config.py"]
+  expected_substrings: ["class Config"]
+
+- id: flask-locate-004
+  question: "Where is the Blueprint class defined?"
+  route: locate
+  expected_files: ["src/flask/sansio/blueprints.py"]
+  expected_substrings: ["class Blueprint"]
+  notes: "src/flask/blueprints.py re-exports a thin WSGI-specific subclass; the real implementation is in sansio/blueprints.py"
+
+# --- dependencies ---
+
+- id: flask-deps-001
+  question: "What dependencies does Flask require?"
+  route: dependencies
+  expected_files: ["pyproject.toml"]
+  expected_substrings: ["werkzeug", "jinja2"]
+
+- id: flask-deps-002
+  question: "What version of werkzeug does flask depend on?"
+  route: dependencies
+  expected_files: ["pyproject.toml"]
+  expected_substrings: ["werkzeug", "3.1"]
+
+- id: flask-deps-003
+  question: "What optional dependency does flask need for async support?"
+  route: dependencies
+  expected_files: ["pyproject.toml"]
+  expected_substrings: ["asgiref"]
+
+- id: flask-deps-004
+  question: "What minimum Python version does flask require?"
+  route: dependencies
+  expected_files: ["pyproject.toml"]
+  expected_substrings: ["3.10"]
+
+# --- endpoints ---
+
+- id: flask-endpoints-001
+  question: "What routes does the tutorial example's auth blueprint define?"
+  route: endpoints
+  expected_files: ["examples/tutorial/flaskr/auth.py"]
+  expected_substrings: ["register", "login", "logout"]
+
+- id: flask-endpoints-002
+  question: "What is the URL prefix for the auth blueprint in the tutorial example app?"
+  route: endpoints
+  expected_files: ["examples/tutorial/flaskr/auth.py"]
+  expected_substrings: ["/auth"]
+
+- id: flask-endpoints-003
+  question: "What HTTP methods does the blog post creation route accept in the tutorial example?"
+  route: endpoints
+  expected_files: ["examples/tutorial/flaskr/blog.py"]
+  expected_substrings: ["GET", "POST"]
+
+- id: flask-endpoints-004
+  question: "What routes does the JavaScript example app define?"
+  route: endpoints
+  expected_files: ["examples/javascript/js_example/views.py"]
+  expected_substrings: ["/add", "POST"]
+
+# --- explain ---
+
+- id: flask-explain-001
+  question: "How does Flask build its URL routing table?"
+  route: explain
+  expected_files: ["src/flask/sansio/app.py"]
+  expected_substrings: ["url_map", "add_url_rule"]
+  notes: "must mention Werkzeug's Map/url_map — this is SPEC.md's own illustrative example question, answered against the current (sansio-refactored) codebase layout"
+
+- id: flask-explain-002
+  question: "How does Flask's add_url_rule method wire up a new URL rule?"
+  route: explain
+  expected_files: ["src/flask/sansio/app.py"]
+  expected_substrings: ["url_map"]
+  notes: "worded to avoid the word 'route', which the router's fast-path regex reads as an endpoints-route signal — found via a real eval run misclassifying the original wording"
+
+- id: flask-explain-003
+  question: "How does Flask manage user sessions?"
+  route: explain
+  expected_files: ["src/flask/sessions.py"]
+  expected_substrings: ["SecureCookieSession"]
+
+- id: flask-explain-004
+  question: "How does the test client work in Flask's testing module?"
+  route: explain
+  expected_files: ["src/flask/testing.py"]
+  expected_substrings: ["FlaskClient"]
+
+# --- overview ---
+
+- id: flask-overview-001
+  question: "What does this repository do?"
+  route: overview
+  expected_files: []
+  expected_substrings: ["web", "framework"]
+
+- id: flask-overview-002
+  question: "What is the purpose of the src/flask/sansio directory?"
+  route: overview
+  expected_files: []
+  expected_substrings: ["app", "blueprint"]
+  notes: "sansio = 'sans I/O' — the transport-agnostic core App/Blueprint/Scaffold implementation WSGI-specific code builds on"
+
+- id: flask-overview-003
+  question: "Summarize what Flask's testing module provides."
+  route: overview
+  expected_files: []
+  expected_substrings: ["test", "client"]
+
+- id: flask-overview-004
+  question: "Give an overview of the examples directory."
+  route: overview
+  expected_files: []
+  expected_substrings: ["example"]

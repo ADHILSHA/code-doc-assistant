@@ -1,0 +1,171 @@
+# Golden question set for tests/fixtures/mini_repo (SPEC.md §6 Phase 4 task 1).
+# mini_repo is hand-built and fully known (see its own README.md), so every
+# expected_files/expected_substrings entry below is exact ground truth, not
+# a best guess — 5 questions per route, 25 total.
+
+# --- locate ---
+
+- id: mini-locate-001
+  question: "Where is UserService defined?"
+  route: locate
+  expected_files: ["src/users/service.py"]
+  expected_substrings: ["UserService"]
+
+- id: mini-locate-002
+  question: "Where is hash_password defined?"
+  route: locate
+  expected_files: ["src/auth/auth.py"]
+  expected_substrings: ["hash_password"]
+
+- id: mini-locate-003
+  question: "Where is the UserClient class defined?"
+  route: locate
+  expected_files: ["web/userClient.ts"]
+  expected_substrings: ["UserClient"]
+
+- id: mini-locate-004
+  question: "Where is derive_key defined?"
+  route: locate
+  expected_files: ["src/auth/crypto.py"]
+  expected_substrings: ["derive_key"]
+  notes: "derive_key is the low-level PBKDF2 primitive factored out of auth.py"
+
+- id: mini-locate-005
+  question: "Which file defines the Address and Profile classes?"
+  route: locate
+  expected_files: ["src/users/models.py"]
+  expected_substrings: ["Address", "Profile"]
+
+# --- dependencies ---
+
+- id: mini-deps-001
+  question: "What dependencies does this project use?"
+  route: dependencies
+  expected_files: ["package.json", "pyproject.toml"]
+  expected_substrings: ["express", "fastapi"]
+
+- id: mini-deps-002
+  question: "What version of express does this project depend on?"
+  route: dependencies
+  expected_files: ["package.json"]
+  expected_substrings: ["express", "4.19"]
+
+- id: mini-deps-003
+  question: "What are the dev dependencies in package.json?"
+  route: dependencies
+  expected_files: ["package.json"]
+  expected_substrings: ["typescript", "vitest"]
+
+- id: mini-deps-004
+  question: "Does this project depend on flask?"
+  route: dependencies
+  expected_files: ["pyproject.toml"]
+  expected_substrings: ["flask"]
+
+- id: mini-deps-005
+  question: "What testing libraries does this project use?"
+  route: dependencies
+  expected_files: ["pyproject.toml"]
+  expected_substrings: ["pytest"]
+
+# --- endpoints ---
+
+- id: mini-endpoints-001
+  question: "What API endpoints does this app expose?"
+  route: endpoints
+  expected_files: ["src/api/fastapi_routes.py", "src/api/flask_routes.py", "web/expressRoutes.ts"]
+  expected_substrings: ["GET", "POST"]
+
+- id: mini-endpoints-002
+  question: "Which endpoints require authentication?"
+  route: endpoints
+  expected_files: ["src/api/fastapi_routes.py", "web/expressRoutes.ts"]
+  expected_substrings: ["auth"]
+  notes: "delete_user (FastAPI) has a verify_password dependency; GET /users/:id (Express) uses requireAuth"
+
+- id: mini-endpoints-003
+  question: "What HTTP method creates a new user via the FastAPI routes?"
+  route: endpoints
+  expected_files: ["src/api/fastapi_routes.py"]
+  expected_substrings: ["POST"]
+
+- id: mini-endpoints-004
+  question: "What is the health check endpoint?"
+  route: endpoints
+  expected_files: ["web/expressRoutes.ts", "src/api/flask_routes.py"]
+  expected_substrings: ["/health", "GET"]
+
+- id: mini-endpoints-005
+  question: "What route handles deleting a post?"
+  route: endpoints
+  expected_files: ["src/api/flask_routes.py"]
+  expected_substrings: ["DELETE", "posts"]
+
+# --- explain ---
+
+- id: mini-explain-001
+  question: "How do we hash passwords in this codebase?"
+  route: explain
+  expected_files: ["src/auth/auth.py", "src/auth/crypto.py"]
+  expected_substrings: ["pbkdf2", "hash_password"]
+  notes: "case-insensitive match expected for PBKDF2"
+
+- id: mini-explain-002
+  question: "Trace what happens when create_user hashes a password, from the service call all the way down to the crypto primitive."
+  route: explain
+  expected_files: ["src/users/service.py", "src/auth/auth.py", "src/auth/crypto.py"]
+  expected_substrings: ["derive_key", "hash_password"]
+  notes: "a genuine 4-file chain (tests/test_service.py -> service.py -> auth.py -> crypto.py); answer should name at least the 3 src/ files"
+
+- id: mini-explain-003
+  question: "How does UserClient fetch a user by id in the TypeScript client?"
+  route: explain
+  expected_files: ["web/userClient.ts"]
+  expected_substrings: ["fetch", "getUserById"]
+
+- id: mini-explain-004
+  question: "Why does src/users/models.py have no import statements?"
+  route: explain
+  expected_files: ["src/users/models.py"]
+  expected_substrings: ["import"]
+  notes: "the file's own module docstring explains this is deliberate, for import-edge-extraction test coverage"
+
+- id: mini-explain-005
+  question: "How does the big_handler function process its payload?"
+  route: explain
+  expected_files: ["src/big_handler.py"]
+  expected_substrings: ["payload"]
+
+# --- overview ---
+
+- id: mini-overview-001
+  question: "What does this repo do?"
+  route: overview
+  expected_files: []
+  expected_substrings: ["fixture", "test"]
+  notes: "mini_repo's own README describes it as a hand-built test fixture, not a real app"
+
+- id: mini-overview-002
+  question: "Summarize the src/auth directory."
+  route: overview
+  expected_files: []
+  expected_substrings: ["password", "hash"]
+
+- id: mini-overview-003
+  question: "What is the purpose of the src/api directory?"
+  route: overview
+  expected_files: []
+  expected_substrings: ["endpoint", "route"]
+
+- id: mini-overview-004
+  question: "Give an overview of the web directory."
+  route: overview
+  expected_files: []
+  expected_substrings: ["client", "user"]
+
+- id: mini-overview-005
+  question: "What is the overall structure and organization of this codebase?"
+  route: overview
+  expected_files: []
+  expected_substrings: ["python", "typescript"]
+  notes: "case-insensitive match expected"

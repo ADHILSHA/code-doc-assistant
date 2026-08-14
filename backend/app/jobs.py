@@ -19,6 +19,7 @@ from app.enrich.summarizer import SummaryStats, summarize_repo
 from app.index.graph_store import PendingFile, index_file_graph, resolve_and_write_refs
 from app.index.store import index_file
 from app.index.vectors import embed_and_store_chunks
+from app.ingest.incremental import diff_files, remove_stale_files
 from app.ingest.source import SourceError, classify_source, resolve_source
 from app.ingest.walker import walk_repo
 from app.providers.embeddings import EmbeddingProvider, get_embedding_provider
@@ -90,6 +91,13 @@ def run_index_job(
         embedding_provider = get_embedding_provider(settings)
         repo_conn = get_repo_connection(repo_id, embedding_provider.dim, settings)
         try:
+            # SPEC.md §6 Phase 4 task 4: computed against `files` as it
+            # stood *before* this run touches it — index_file() below
+            # already skips re-chunking `diff.unchanged`/only-content-hash-
+            # identical files, but nothing yet knows about `diff.removed`
+            # (files gone from the repo since the last index) until this.
+            diff = diff_files(repo_conn, kept)
+
             total_chunks_written = 0
             pending_embeddings: list[tuple[int, str]] = []
             total_files = len(kept)
@@ -194,6 +202,12 @@ def run_index_job(
                 summarization_llm_provider, _on_summary_progress,
             )
 
+            # SPEC.md §6 Phase 4 task 4: "delete orphaned chunks, symbols,
+            # refs, and vectors" for files no longer in the repo. Done last
+            # (not interleaved with the main loop above) so it can't race
+            # with anything still reading `files` by path during indexing.
+            files_removed = remove_stale_files(repo_conn, diff.removed)
+
             symbols_count = repo_conn.execute("SELECT COUNT(*) AS n FROM symbols").fetchone()["n"]
             endpoints_count = repo_conn.execute("SELECT COUNT(*) AS n FROM endpoints").fetchone()["n"]
             dependencies_count = repo_conn.execute("SELECT COUNT(*) AS n FROM dependencies").fetchone()["n"]
@@ -201,6 +215,10 @@ def run_index_job(
             stats = {
                 "files": total_files,
                 "files_skipped": len(skipped),
+                "files_added": len(diff.added),
+                "files_changed": len(diff.changed),
+                "files_unchanged": len(diff.unchanged),
+                "files_removed": files_removed,
                 "chunks": total_chunks_written,
                 "chunks_embedded": len(pending_embeddings),
                 "languages": sorted({f.language for f in kept if f.language}),

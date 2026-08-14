@@ -64,6 +64,14 @@ class QueryRequest(BaseModel):
     session_id: str | None = None
 
 
+# --- /api/eval/run ---
+
+
+class EvalRunRequest(BaseModel):
+    repo_id: str
+    suite: str  # which eval/golden/{suite}.yaml to score the repo against
+
+
 # --- /api/repos/{id}/file ---
 
 

@@ -104,6 +104,28 @@ class Settings(BaseSettings):
     # --- Session memory (Phase 3 task 5) ---
     session_history_turns: int = 3
 
+    # --- Evaluation (Phase 4 tasks 1-3) ---
+    # Approximate, for the `cost_per_query` metric only — not billing-grade.
+    # Per-model pricing changes over time; these are order-of-magnitude
+    # defaults for the synthesis model, overridable per deployment.
+    cost_per_1k_input_tokens_usd: float = 0.003
+    cost_per_1k_output_tokens_usd: float = 0.015
+    # Independent fields (not both derived from one `eval_dir`), on
+    # purpose: `golden_dir` should always point at the real, committed
+    # question sets (so a test run genuinely exercises the authored
+    # golden set), while `eval_report_dir` needs to be redirectable to a
+    # throwaway location in tests — writing real report files into the
+    # repo on every test run would be its own kind of test pollution.
+    golden_dir: Path = _PROJECT_ROOT / "eval" / "golden"
+    eval_report_dir: Path = _PROJECT_ROOT / "eval" / "report"
+
+    # --- Incremental reindex (Phase 4 task 4) ---
+    # Cap on how many changed/added files a reindex will fetch+reset for
+    # before falling back to a full re-clone — protects against a shallow
+    # clone's history not reaching far enough back for `git fetch` alone to
+    # resolve (SPEC.md §7.4 cost/performance guardrail spirit).
+    reindex_fetch_timeout_seconds: int = 60
+
     # --- Cost / performance guardrails (SPEC.md §7.4-7.5) ---
     max_chunks_per_repo: int = 50_000
     max_repo_size_mb: int = 500
