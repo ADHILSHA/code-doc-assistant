@@ -24,6 +24,8 @@ from app.ingest.source import SourceError, classify_source, resolve_source
 from app.ingest.walker import walk_repo
 from app.providers.embeddings import EmbeddingProvider, get_embedding_provider
 from app.providers.llm import LLMProvider, get_summarization_llm_provider
+from app.security.credentials import GITHUB_PROVIDER
+from app.security.credentials import get_token as get_stored_token
 from app.util import now_iso
 
 
@@ -73,7 +75,18 @@ def run_index_job(
         )
         _update_repo(registry_conn, repo_id, status="cloning")
 
-        resolved = resolve_source(source, repo_id, settings)
+        # SPEC.md §6 Phase 5 task 2: a stored GitHub PAT (if any) is used
+        # as a git credential for cloning/fetching — only relevant for
+        # github sources, and `get_stored_token` returns None (no error)
+        # when nothing's configured, so a public-repo/no-token setup is
+        # unaffected. Fetched here (not inside ingest/source.py, which has
+        # no DB connection of its own) and passed through as a plain str.
+        github_token = (
+            get_stored_token(registry_conn, GITHUB_PROVIDER, settings)
+            if classify_source(source) == "github"
+            else None
+        )
+        resolved = resolve_source(source, repo_id, settings, github_token=github_token)
 
         _update_repo(
             registry_conn,

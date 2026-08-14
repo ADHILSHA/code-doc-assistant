@@ -2,10 +2,28 @@
 + commit SHA. SPEC.md §7.5: shallow-clone with a timeout, cap total repo
 size, and never execute anything from the cloned repo — only `git` itself
 is ever invoked here.
+
+Private-repo auth (SPEC.md §6 Phase 5 task 2): an optional `github_token`
+(a PAT, see app/security/credentials.py) is passed through to `git clone`/
+`git fetch` as a per-invocation `-c http.extraheader=...` config override
+— NOT embedded in the remote URL. That distinction matters: a URL like
+`https://x-access-token:{token}@github.com/...` given to `git clone` gets
+written verbatim into the new clone's `.git/config` (`remote.origin.url`),
+so the token would sit in plaintext on disk for as long as the clone
+exists and would resurface in `git remote get-url origin`. A `-c` flag,
+by contrast, only affects the single git process it's passed to and is
+never persisted anywhere — the clone's `.git/config` ends up with the
+same plain `https://github.com/owner/repo.git` remote URL whether or not
+a token was used, and `_try_fetch_and_reset`'s remote-URL comparison
+(below) never sees a token-bearing string. Any git stderr text is also
+defensively scrubbed of the raw token before it can reach a `SourceError`
+message, `repos.error`, or a log line, in case a future error path routes
+token-bearing text through git's own output somehow.
 """
 
 from __future__ import annotations
 
+import base64
 import re
 import shutil
 import subprocess
@@ -67,18 +85,44 @@ def classify_source(source: str) -> SourceType:
     return "github" if _parse_github_url(source) is not None else "local"
 
 
-def resolve_source(source: str, repo_id: str, settings: Settings) -> ResolvedSource:
+def resolve_source(
+    source: str, repo_id: str, settings: Settings, github_token: str | None = None
+) -> ResolvedSource:
     source = source.strip()
     parsed = _parse_github_url(source)
     if parsed is not None:
-        return _clone_github(*parsed, repo_id=repo_id, settings=settings)
+        return _clone_github(*parsed, repo_id=repo_id, settings=settings, github_token=github_token)
     return _validate_local(source)
 
 
-def _clone_github(owner: str, name: str, *, repo_id: str, settings: Settings) -> ResolvedSource:
+def _auth_config_args(github_token: str | None) -> list[str]:
+    """`-c http.extraheader=...` args to splice right after `git` for a
+    single clone/fetch invocation — see module docstring for why this is
+    used instead of a token-embedded URL. Empty list (no-op) for a public
+    repo / no token configured."""
+    if not github_token:
+        return []
+    basic = base64.b64encode(f"x-access-token:{github_token}".encode()).decode()
+    return ["-c", f"http.extraheader=AUTHORIZATION: basic {basic}"]
+
+
+def _scrub(text: str, github_token: str | None) -> str:
+    """Defensive: strip any raw occurrence of the token from text destined
+    for an exception message / log line. Should be a no-op in practice —
+    the token is never passed as a URL or CLI arg git would echo back —
+    but costs nothing to guarantee."""
+    if not github_token:
+        return text
+    return text.replace(github_token, "***")
+
+
+def _clone_github(
+    owner: str, name: str, *, repo_id: str, settings: Settings, github_token: str | None = None
+) -> ResolvedSource:
     # Clone from a canonical URL we build ourselves, not the raw pasted
     # input — a query string or `/tree/main` suffix passed straight to
-    # `git clone` would confuse or break it.
+    # `git clone` would confuse or break it. Never token-bearing (see
+    # module docstring) — auth is layered on via `_auth_config_args`.
     url = f"https://github.com/{owner}/{name}.git"
     dest = settings.repo_clone_path(repo_id)
 
@@ -88,8 +132,8 @@ def _clone_github(owner: str, name: str, *, repo_id: str, settings: Settings) ->
     # deleting and re-cloning from scratch. Falls back to a full fresh
     # clone on *any* failure — corrupted state, wrong remote, network
     # hiccup — a fresh clone is always correct, just slower.
-    if not (dest.is_dir() and _try_fetch_and_reset(dest, url, settings)):
-        _fresh_clone(dest, url, settings)
+    if not (dest.is_dir() and _try_fetch_and_reset(dest, url, settings, github_token)):
+        _fresh_clone(dest, url, settings, github_token)
 
     size_mb = _dir_size_bytes(dest) / (1024 * 1024)
     if size_mb > settings.max_repo_size_mb:
@@ -110,13 +154,15 @@ def _clone_github(owner: str, name: str, *, repo_id: str, settings: Settings) ->
     )
 
 
-def _fresh_clone(dest: Path, url: str, settings: Settings) -> None:
+def _fresh_clone(
+    dest: Path, url: str, settings: Settings, github_token: str | None = None
+) -> None:
     if dest.exists():
         shutil.rmtree(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
         subprocess.run(
-            ["git", "clone", "--depth", "1", url, str(dest)],
+            ["git", *_auth_config_args(github_token), "clone", "--depth", "1", url, str(dest)],
             check=True, capture_output=True, text=True, timeout=settings.clone_timeout_seconds,
         )
     except subprocess.TimeoutExpired as exc:
@@ -124,10 +170,12 @@ def _fresh_clone(dest: Path, url: str, settings: Settings) -> None:
         raise SourceError(f"Clone of {url} timed out after {settings.clone_timeout_seconds}s") from exc
     except subprocess.CalledProcessError as exc:
         shutil.rmtree(dest, ignore_errors=True)
-        raise SourceError(f"git clone failed: {exc.stderr.strip()}") from exc
+        raise SourceError(f"git clone failed: {_scrub(exc.stderr.strip(), github_token)}") from exc
 
 
-def _try_fetch_and_reset(dest: Path, url: str, settings: Settings) -> bool:
+def _try_fetch_and_reset(
+    dest: Path, url: str, settings: Settings, github_token: str | None = None
+) -> bool:
     """True if `dest` was successfully refreshed in place (fetch + hard
     reset to the remote's current default branch tip). False for any
     reason — not a git repo, points at a different remote, fetch/reset
@@ -154,7 +202,7 @@ def _try_fetch_and_reset(dest: Path, url: str, settings: Settings) -> bool:
         # configured, rather than relying on `origin/HEAD` having been
         # kept in sync.
         subprocess.run(
-            ["git", "fetch", "--depth", "1", "origin", branch],
+            ["git", *_auth_config_args(github_token), "fetch", "--depth", "1", "origin", branch],
             cwd=dest, check=True, capture_output=True, text=True,
             timeout=settings.reindex_fetch_timeout_seconds,
         )

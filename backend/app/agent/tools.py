@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import Settings
+from app.ingest.redact import redact_secrets
 from app.ingest.safe_path import PathTraversalError, safe_join
 from app.providers.embeddings import EmbeddingProvider
 from app.retrieval import structured
@@ -113,7 +114,9 @@ def _grep_ripgrep(ctx: ToolContext, pattern: str, glob: str | None, max_results:
         lineno_str, sep2, text = rest.partition(":")
         if not (sep and sep2 and lineno_str.isdigit()):
             continue
-        matches.append({"path": path.removeprefix("./"), "line": int(lineno_str), "text": text.strip()[:_GREP_LINE_CHARS]})
+        matches.append(
+            {"path": path.removeprefix("./"), "line": int(lineno_str), "text": redact_secrets(text.strip()[:_GREP_LINE_CHARS])}
+        )
         if len(matches) >= max_results:
             break
     return matches
@@ -136,7 +139,7 @@ def _grep_python_fallback(ctx: ToolContext, pattern: str, glob: str | None, max_
             continue
         for lineno, line in enumerate(text.splitlines(), start=1):
             if regex.search(line):
-                matches.append({"path": path, "line": lineno, "text": line.strip()[:_GREP_LINE_CHARS]})
+                matches.append({"path": path, "line": lineno, "text": redact_secrets(line.strip()[:_GREP_LINE_CHARS])})
                 if len(matches) >= max_results:
                     return matches
     return matches
@@ -169,7 +172,13 @@ def tool_read_file(ctx: ToolContext, args: dict[str, Any]) -> tuple[Any, str]:
     max_end = start_line + ctx.settings.agent_read_file_max_lines - 1
     end_line = max(start_line, min(total, requested_end, max_end))
 
-    result = {"path": path, "start_line": start_line, "end_line": end_line, "lines": all_lines[start_line - 1 : end_line]}
+    # SPEC.md §6 Phase 5 task 3 / §7.5: read_file bypasses the (already-
+    # redacted, see index/store.py) chunk store entirely — it reads live
+    # from disk, the same as grep — so this is the redaction boundary for
+    # this tool, applied right before the result becomes a tool_result sent
+    # to the model.
+    selected_lines = [redact_secrets(line) for line in all_lines[start_line - 1 : end_line]]
+    result = {"path": path, "start_line": start_line, "end_line": end_line, "lines": selected_lines}
     return result, f"{path}:{start_line}-{end_line}"
 
 

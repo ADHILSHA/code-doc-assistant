@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { streamQuery } from "../api/client";
 import type { ChatMessage, Citation, ToolCallEvent } from "../types";
 import { MessageBubble } from "./MessageBubble";
@@ -12,6 +12,7 @@ export function ChatPanel({ repoId, onCitationClick }: ChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [question, setQuestion] = useState("");
   const [busy, setBusy] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
   // SPEC.md §6 Phase 3 task 5: a stable id for this conversation, so
   // follow-up questions ("how does it handle errors?") can be resolved
   // against the last few turns (retrieval/session.py). Regenerated
@@ -22,7 +23,27 @@ export function ChatPanel({ repoId, onCitationClick }: ChatPanelProps) {
   useEffect(() => {
     setMessages([]);
     setSessionId(crypto.randomUUID());
+    inputRef.current?.focus();
   }, [repoId]);
+
+  // SPEC.md §6 Phase 5 task 1 (keyboard nav): "/" jumps to the question
+  // box from anywhere on the page — the same convention GitHub/Slack/etc.
+  // use for "focus search". Skipped while focus is already inside a text
+  // field (so it doesn't hijack a "/" someone is actually typing into the
+  // question box or a repo-URL field) and while a request is in flight
+  // (the box is disabled then anyway).
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "/" || busy) return;
+      const active = document.activeElement;
+      const isTyping = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
+      if (isTyping) return;
+      e.preventDefault();
+      inputRef.current?.focus();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [busy]);
 
   function updateMessage(id: string, patch: Partial<ChatMessage>) {
     setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
@@ -100,10 +121,11 @@ export function ChatPanel({ repoId, onCitationClick }: ChatPanelProps) {
 
       <form onSubmit={handleSubmit} className="flex gap-2">
         <input
+          ref={inputRef}
           type="text"
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
-          placeholder="Ask a question about this repo…"
+          placeholder="Ask a question about this repo… (press / to focus)"
           disabled={busy}
           className="flex-1 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm
                      text-neutral-100 placeholder:text-neutral-500 focus:border-neutral-500

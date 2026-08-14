@@ -26,6 +26,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
+from app.ingest.redact import redact_secrets
 from app.parsing.extractors.dependencies import (
     Dependency,
     extract_dependencies,
@@ -68,12 +69,16 @@ def _write_symbols(conn: sqlite3.Connection, file_id: int, symbols: list[Symbol]
     conn.execute("DELETE FROM symbols WHERE file_id = ?", (file_id,))
     ranges: list[tuple[int, int, int]] = []
     for s in symbols:
+        # SPEC.md §6 Phase 5 task 3: a docstring is free-text and, unlike a
+        # signature, could in principle quote an example containing a
+        # credential — redact it the same as chunk content.
+        docstring = redact_secrets(s.docstring) if s.docstring else s.docstring
         cur = conn.execute(
             "INSERT INTO symbols "
             "(file_id, name, kind, signature, docstring, parent_symbol, start_line, end_line, is_exported) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                file_id, s.name, s.kind, s.signature, s.docstring, s.parent_symbol,
+                file_id, s.name, s.kind, s.signature, docstring, s.parent_symbol,
                 s.start_line, s.end_line, int(s.is_exported),
             ),
         )

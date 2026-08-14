@@ -4,6 +4,7 @@ import { ChatPanel } from "./components/ChatPanel";
 import { CodeViewer } from "./components/CodeViewer";
 import { DependencyList } from "./components/DependencyList";
 import { EndpointsTable } from "./components/EndpointsTable";
+import { GithubTokenSettings } from "./components/GithubTokenSettings";
 import { IndexProgress } from "./components/IndexProgress";
 import { RepoSelector } from "./components/RepoSelector";
 import type { Citation } from "./types";
@@ -51,17 +52,28 @@ function App() {
         showCodeViewer ? "max-w-7xl" : "max-w-4xl"
       }`}
     >
-      <header>
-        <h1 className="text-lg font-semibold text-neutral-100">Code Documentation Assistant</h1>
-        <p className="text-sm text-neutral-500">
-          Point this at a repo and ask it how the code works.
-        </p>
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-lg font-semibold text-neutral-100">Code Documentation Assistant</h1>
+          <p className="text-sm text-neutral-500">
+            Point this at a repo and ask it how the code works.
+          </p>
+        </div>
+        <GithubTokenSettings />
       </header>
 
       <RepoSelector
         selectedRepoId={selectedRepoId(view)}
         onRepoCreated={(repoId, jobId) => setView({ kind: "indexing", repoId, jobId })}
         onRepoSelected={handleRepoSelected}
+        onRepoReindexed={(repoId, jobId) => {
+          setSelectedCitation(null);
+          setView({ kind: "indexing", repoId, jobId });
+        }}
+        onSelectedRepoDeleted={() => {
+          setSelectedCitation(null);
+          setView({ kind: "idle" });
+        }}
         refreshSignal={view.kind === "ready" ? view.repoId : undefined}
       />
 

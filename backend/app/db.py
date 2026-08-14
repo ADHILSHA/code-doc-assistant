@@ -48,6 +48,21 @@ REGISTRY_MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_jobs_repo ON jobs(repo_id);
     """,
+    # v2 (Phase 5 task 2): encrypted-at-rest credentials (a GitHub PAT used
+    # as a git credential for private-repo clone/fetch — see
+    # app/security/credentials.py). `provider` is a fixed key ("github" for
+    # now) rather than a free-form label, so there's at most one stored
+    # token per provider; `token_encrypted` is the Fernet ciphertext, never
+    # plaintext.
+    """
+    CREATE TABLE credentials (
+      id INTEGER PRIMARY KEY,
+      provider TEXT UNIQUE NOT NULL,
+      token_encrypted BLOB NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    """,
 ]
 
 # --- per-repo db (data/dbs/{repo_id}.db) ---

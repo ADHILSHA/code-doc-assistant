@@ -1,11 +1,17 @@
 import { useEffect, useState } from "react";
-import { createRepo, listRepos } from "../api/client";
+import { createRepo, deleteRepo, listRepos, reindexRepo } from "../api/client";
 import type { Repo } from "../types";
 
 interface RepoSelectorProps {
   selectedRepoId: string | null;
   onRepoCreated: (repoId: string, jobId: string) => void;
   onRepoSelected: (repoId: string) => void;
+  /** A reindex was kicked off from here — the caller should switch into
+   * its "indexing" view for this (repoId, jobId), same as a fresh index. */
+  onRepoReindexed: (repoId: string, jobId: string) => void;
+  /** The currently-selected repo was deleted — the caller should reset
+   * back to its idle/empty state. */
+  onSelectedRepoDeleted: () => void;
   /** Bump this (e.g. on indexing completion) to force the repo list —
    * including each repo's status badge — to refetch. */
   refreshSignal?: unknown;
@@ -15,12 +21,17 @@ export function RepoSelector({
   selectedRepoId,
   onRepoCreated,
   onRepoSelected,
+  onRepoReindexed,
+  onSelectedRepoDeleted,
   refreshSignal,
 }: RepoSelectorProps) {
   const [source, setSource] = useState("");
   const [repos, setRepos] = useState<Repo[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Repo id currently mid-action (reindex/delete) — disables that row's
+  // buttons so a slow request can't be double-fired by an impatient click.
+  const [busyRepoId, setBusyRepoId] = useState<string | null>(null);
 
   useEffect(() => {
     refreshRepos();
@@ -52,6 +63,41 @@ export function RepoSelector({
     }
   }
 
+  async function handleReindex(repo: Repo) {
+    if (busyRepoId) return;
+    setBusyRepoId(repo.id);
+    setError(null);
+    try {
+      const { job_id } = await reindexRepo(repo.id);
+      onRepoReindexed(repo.id, job_id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "failed to start reindex");
+    } finally {
+      setBusyRepoId(null);
+    }
+  }
+
+  async function handleDelete(repo: Repo) {
+    if (busyRepoId) return;
+    // A delete is not reversible (removes the clone + index) — a native
+    // confirm is the simplest honest guard for a destructive action in a
+    // small internal tool; no need for a custom modal here.
+    if (!window.confirm(`Delete "${repo.display_name}"? This removes its index and cannot be undone.`)) {
+      return;
+    }
+    setBusyRepoId(repo.id);
+    setError(null);
+    try {
+      await deleteRepo(repo.id);
+      if (repo.id === selectedRepoId) onSelectedRepoDeleted();
+      await refreshRepos();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "failed to delete repo");
+    } finally {
+      setBusyRepoId(null);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-neutral-800 bg-neutral-900 p-4">
       <form onSubmit={handleSubmit} className="flex gap-2">
@@ -80,17 +126,43 @@ export function RepoSelector({
           <p className="text-xs uppercase tracking-wide text-neutral-500">Repositories</p>
           <ul className="flex flex-col gap-1">
             {repos.map((repo) => (
-              <li key={repo.id}>
+              <li
+                key={repo.id}
+                className={`group flex items-center gap-2 rounded-md px-3 py-1.5 hover:bg-neutral-800 ${
+                  repo.id === selectedRepoId ? "bg-neutral-800" : ""
+                }`}
+              >
                 <button
+                  type="button"
                   onClick={() => onRepoSelected(repo.id)}
-                  className={`flex w-full items-center justify-between rounded-md px-3 py-1.5
-                              text-left text-sm hover:bg-neutral-800 ${
-                                repo.id === selectedRepoId ? "bg-neutral-800" : ""
-                              }`}
+                  title={repo.error ?? undefined}
+                  className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left text-sm"
                 >
                   <span className="truncate">{repo.display_name}</span>
                   <StatusBadge status={repo.status} />
                 </button>
+                <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                  <button
+                    type="button"
+                    onClick={() => handleReindex(repo)}
+                    disabled={busyRepoId === repo.id || repo.status !== "ready"}
+                    title="Reindex"
+                    aria-label={`Reindex ${repo.display_name}`}
+                    className="rounded p-1 text-xs text-neutral-500 hover:text-neutral-200 disabled:opacity-30"
+                  >
+                    ↻
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(repo)}
+                    disabled={busyRepoId === repo.id}
+                    title="Delete"
+                    aria-label={`Delete ${repo.display_name}`}
+                    className="rounded p-1 text-xs text-neutral-500 hover:text-red-400 disabled:opacity-30"
+                  >
+                    🗑
+                  </button>
+                </div>
               </li>
             ))}
           </ul>

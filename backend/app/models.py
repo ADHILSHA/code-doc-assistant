@@ -39,6 +39,19 @@ class RepoOut(BaseModel):
     indexed_at: str | None = None
 
 
+# --- /api/auth/github-token (SPEC.md §6 Phase 5 task 2) ---
+
+
+class GithubTokenRequest(BaseModel):
+    token: str = Field(..., min_length=1, description="A GitHub personal access token")
+
+
+class GithubTokenStatus(BaseModel):
+    # Never the token itself — only whether one is configured (SPEC.md §6:
+    # "never log or return it via the API").
+    configured: bool
+
+
 # --- /api/jobs ---
 
 

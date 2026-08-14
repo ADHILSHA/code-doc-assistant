@@ -51,6 +51,12 @@ export async function deleteRepo(id: string): Promise<void> {
   if (!res.ok) throw new Error(await extractError(res));
 }
 
+export async function reindexRepo(id: string): Promise<{ job_id: string }> {
+  const res = await fetch(`${BASE}/repos/${id}/reindex`, { method: "POST" });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
 export async function getJob(id: string): Promise<Job> {
   const res = await fetch(`${BASE}/jobs/${id}`);
   if (!res.ok) throw new Error(await extractError(res));
@@ -67,6 +73,31 @@ export async function getDependencies(repoId: string): Promise<Dependency[]> {
   const res = await fetch(`${BASE}/repos/${repoId}/dependencies`);
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
+}
+
+// --- GitHub PAT (SPEC.md §6 Phase 5 task 2) ---
+// The token itself is only ever sent, never received back — GET only
+// reports whether one is configured.
+
+export async function getGithubTokenStatus(): Promise<{ configured: boolean }> {
+  const res = await fetch(`${BASE}/auth/github-token`);
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
+export async function setGithubToken(token: string): Promise<{ configured: boolean }> {
+  const res = await fetch(`${BASE}/auth/github-token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
+export async function deleteGithubToken(): Promise<void> {
+  const res = await fetch(`${BASE}/auth/github-token`, { method: "DELETE" });
+  if (!res.ok) throw new Error(await extractError(res));
 }
 
 export async function getFileSlice(

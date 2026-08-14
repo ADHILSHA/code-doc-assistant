@@ -37,6 +37,16 @@ class Settings(BaseSettings):
     # calls) without touching this default.
     allow_local_repos: bool = False
 
+    # --- Credentials (SPEC.md §6 Phase 5 task 2: private-repo auth) ---
+    # A GitHub PAT (used as a git credential for cloning/fetching private
+    # repos) is stored encrypted at rest in the registry DB — see
+    # app/security/credentials.py. This key encrypts/decrypts it and must
+    # therefore live *outside* that DB; generate one with
+    # `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
+    # Storing/using a token is refused with a clear error if this is unset
+    # — never silently falls back to storing it unencrypted.
+    credential_encryption_key: str | None = None
+
     # --- LLM ---
     anthropic_api_key: str | None = None
     synthesis_model: str = "claude-sonnet-5"
@@ -131,6 +141,22 @@ class Settings(BaseSettings):
     max_repo_size_mb: int = 500
     clone_timeout_seconds: int = 120
     embedding_batch_size: int = 256
+
+    # --- Request hardening (SPEC.md §6 Phase 5 task 4) ---
+    # Applied to the expensive, LLM/embedding-backed endpoints only (POST
+    # /api/query, /api/eval/run, /api/repos, /api/repos/{id}/reindex) — see
+    # app/middleware.py — not to cheap, frequently-polled GETs like
+    # /api/jobs/{id}, which a UI legitimately polls every second or two.
+    # <=0 disables rate limiting entirely (used by most tests, which create
+    # a fresh app/middleware instance per test function but can still call
+    # an endpoint more than once).
+    rate_limit_requests_per_minute: int = 30
+    # Wall-clock cap on a single HTTP request. /api/query and /api/eval/run
+    # get the longer budget (agent-loop / whole-golden-set runs can
+    # legitimately take a while — see api/evaluate.py's docstring); every
+    # other endpoint gets the shorter default.
+    request_timeout_seconds: float = 30
+    long_request_timeout_seconds: float = 120
 
     @property
     def clones_dir(self) -> Path:

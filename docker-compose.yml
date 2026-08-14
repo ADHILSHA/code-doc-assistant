@@ -1,0 +1,47 @@
+# SPEC.md §6 Phase 5 task 5: backend + frontend, plus a persistent named
+# volume for the backend's data dir (SQLite registry/per-repo DBs +
+# repo clones — app/config.py::Settings.data_dir) so an index survives a
+# `docker compose down`/restart.
+#
+# `backend/.env` (gitignored, never baked into either image — see each
+# service's .dockerignore) supplies real secrets (ANTHROPIC_API_KEY,
+# VOYAGE_API_KEY/OPENAI_API_KEY, CREDENTIAL_ENCRYPTION_KEY, ...) via
+# `env_file:` below, the same file local (non-Docker) dev already uses.
+#
+# Only the frontend's port needs to be reached by a human — the browser
+# only ever talks to nginx, which reverse-proxies /api to the backend
+# service by its Compose service name (see frontend/nginx.conf), so the
+# backend's own port mapping below is for direct API debugging only
+# (`curl localhost:8000/api/...`), not something the frontend depends on.
+services:
+  backend:
+    build: ./backend
+    env_file:
+      - ./backend/.env
+    environment:
+      # Overrides whatever ALLOW_LOCAL_REPOS is set to in backend/.env:
+      # a "local path" means local to *this container's* filesystem, which
+      # a user outside the container can't point at anything meaningful
+      # anyway — indexing here should always go through a GitHub URL.
+      ALLOW_LOCAL_REPOS: "false"
+      # nginx is what the browser actually talks to (see frontend/nginx.conf)
+      # — CORS only matters for a request hitting the backend directly
+      # from a browser on a different origin, which this default port
+      # covers for local `docker compose up` use.
+      FRONTEND_ORIGIN: "http://localhost:8080"
+    volumes:
+      - data:/app/data
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  data:

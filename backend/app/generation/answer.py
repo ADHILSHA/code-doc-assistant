@@ -53,6 +53,7 @@ from app.generation.citations import (
     attach_permalinks,
     verify_citations,
 )
+from app.logging_setup import get_logger
 from app.models import Citation, RetrievedChunk
 from app.providers.embeddings import EmbeddingProvider
 from app.providers.llm import LLMProvider, LLMUsage, get_summarization_llm_provider
@@ -75,6 +76,43 @@ from app.retrieval.structured import (
 # docstring) — cosmetic only, not worth a config field. Structured answers
 # reuse the same replay for a consistent UI feel across routes.
 _TOKEN_REPLAY_DELAY_SECONDS = 0.015
+
+logger = get_logger(__name__)
+
+
+def _user_facing_error_message(exc: Exception) -> str:
+    """SPEC.md §6 Phase 5 task 1 (error states): the SSE `error` event's
+    `message` reaches the chat UI verbatim (MessageBubble renders it as-is)
+    — found via a live smoke test that an unwrapped provider exception's
+    `str()` is raw SDK/HTTP internals (e.g. `"Error code: 400 - {'type':
+    'error', 'error': {...}, 'request_id': '...'}"`  from a real
+    insufficient-credits response), not something a non-technical user
+    should have to parse. The real exception is always logged in full
+    server-side (with this request's `request_id` trace, via
+    logging_setup.py) either way — this only controls what the *client*
+    sees.
+
+    Duck-typed on `anthropic` exception class names rather than importing
+    `anthropic` at module load time, matching the lazy-import-as-optional-
+    dependency pattern `providers/llm.py` already uses for the same
+    reason: this module has no other reason to depend on any specific
+    LLM vendor's SDK.
+    """
+    type_name = type(exc).__name__
+    module_name = type(exc).__module__
+    if module_name.startswith("anthropic"):
+        if type_name == "AuthenticationError":
+            return "The configured Anthropic API key is invalid. Contact whoever runs this deployment."
+        if type_name == "RateLimitError":
+            return "The AI provider is rate-limiting requests right now. Please try again in a moment."
+        if type_name in ("APIConnectionError", "APITimeoutError"):
+            return "Could not reach the AI provider. Please try again in a moment."
+        if type_name == "BadRequestError" and "credit balance" in str(exc).lower():
+            return "The configured Anthropic API key has no available credit. Contact whoever runs this deployment."
+        if type_name in ("OverloadedError", "InternalServerError"):
+            return "The AI provider is temporarily unavailable. Please try again in a moment."
+        return "The AI provider rejected the request. Contact whoever runs this deployment if this persists."
+    return "Something went wrong while generating the answer. Please try again."
 
 
 def generate_answer_events(
@@ -139,8 +177,9 @@ def generate_answer_events(
             conn, settings, embedding_provider, llm_provider, repo_context, repo_root, question, route,
             start, session_id,
         )
-    except Exception as exc:  # noqa: BLE001 - surfaced to the client as an SSE error event
-        yield _event("error", {"message": str(exc)})
+    except Exception as exc:
+        logger.exception("query failed", extra={"question": question})
+        yield _event("error", {"message": _user_facing_error_message(exc)})
 
 
 def _resolve_question(

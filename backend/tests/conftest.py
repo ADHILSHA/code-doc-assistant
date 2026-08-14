@@ -29,7 +29,15 @@ def make_settings(tmp_path: Path, **overrides: Any) -> Settings:
     passed for a long time because no one's local `.env` disagreed with the
     defaults until `ALLOW_LOCAL_REPOS=true` was added for local dev use.)
     """
-    defaults: dict[str, Any] = {"data_dir": tmp_path / "data", "embedding_provider": "fake"}
+    defaults: dict[str, Any] = {
+        "data_dir": tmp_path / "data",
+        "embedding_provider": "fake",
+        # Tests exercise API behavior, not production throttling — a real
+        # rate limit would make a test's own call count/timing a source of
+        # flakiness unrelated to what it's actually asserting. <=0 disables
+        # RateLimitMiddleware entirely (app/middleware.py).
+        "rate_limit_requests_per_minute": 0,
+    }
     defaults.update(overrides)
     return Settings(_env_file=None, **defaults)
 

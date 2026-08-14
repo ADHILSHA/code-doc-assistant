@@ -12,6 +12,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from app.index import lexical
+from app.ingest.redact import redact_secrets
 from app.ingest.walker import DiscoveredFile
 from app.parsing.chunker import chunk_file
 from app.parsing.imports import extract_imports
@@ -122,6 +123,12 @@ def index_file(
     chunk_ids: list[int] = []
     for c in result.chunks:
         header = _build_header(discovered.path, c.parent_symbol, imports)
+        # SPEC.md §6 Phase 5 task 3 / §7.5: redact before storage — this is
+        # the single choke point every downstream consumer of chunk content
+        # goes through (embedding, the synthesis/agent prompt context,
+        # semantic_search results), so redacting here covers all of them at
+        # once rather than needing a redaction call at each call site.
+        content = redact_secrets(c.content)
         cur = conn.execute(
             "INSERT INTO chunks "
             "(file_id, symbol_name, symbol_kind, parent_symbol, start_line, end_line, "
@@ -135,15 +142,15 @@ def index_file(
                 c.start_line,
                 c.end_line,
                 header,
-                c.content,
-                max(1, len(c.content) // 4),
+                content,
+                max(1, len(content) // 4),
             ),
         )
         assert cur.lastrowid is not None
         chunk_id = cur.lastrowid
         chunk_ids.append(chunk_id)
         lexical.index_chunk(
-            conn, chunk_id, content=c.content, symbol_name=c.symbol_name, path=discovered.path
+            conn, chunk_id, content=content, symbol_name=c.symbol_name, path=discovered.path
         )
 
     return FileIndexResult(

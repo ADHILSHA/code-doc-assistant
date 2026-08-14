@@ -14,6 +14,8 @@ project.
   splitting for oversized functions.
 - `web/userClient.ts` — a known TypeScript module.
 - `tests/test_service.py` — a test file (should be indexed with `is_test=1`).
+- `src/auth/legacy_key_notes.py` — fake credentials (AWS key, GitHub token, a
+  high-entropy string in a docstring) for the secret-redaction tests. None real.
 
 ## What's in here to be filtered out
 

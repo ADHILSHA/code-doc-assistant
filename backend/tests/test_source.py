@@ -7,8 +7,10 @@ import pytest
 
 from app.ingest.source import (
     SourceError,
+    _auth_config_args,
     _clone_github,
     _fresh_clone,
+    _scrub,
     _try_fetch_and_reset,
     classify_source,
     resolve_source,
@@ -273,3 +275,100 @@ def test_clone_github_falls_back_to_fresh_clone_when_existing_dest_is_not_a_git_
     resolved = _clone_github("pallets", "flask", repo_id="repo1", settings=settings)
     assert resolved.source_type == "github"
     assert any(cmd[:2] == ["git", "clone"] for cmd in calls)
+
+
+# --- private-repo auth (SPEC.md §6 Phase 5 task 2): a stored PAT is passed
+# as a per-invocation `-c http.extraheader=...` override, never embedded in
+# the clone URL — see source.py's module docstring for why.
+
+
+def test_auth_config_args_empty_for_no_token():
+    assert _auth_config_args(None) == []
+    assert _auth_config_args("") == []
+
+
+def test_auth_config_args_shape_for_a_token():
+    args = _auth_config_args("ghp_faketoken1234567890")
+    assert args[0] == "-c"
+    assert args[1].startswith("http.extraheader=AUTHORIZATION: basic ")
+    # never the raw token — always base64-encoded "x-access-token:<token>"
+    assert "ghp_faketoken1234567890" not in args[1]
+
+
+def test_scrub_removes_token_from_text():
+    assert _scrub("error: bad creds ghp_secret123", "ghp_secret123") == "error: bad creds ***"
+    assert _scrub("no token here", None) == "no token here"
+
+
+def test_clone_github_passes_auth_header_when_token_given(tmp_path: Path, monkeypatch):
+    """Command-construction assertion (mocked subprocess, no network call,
+    SPEC.md §7.2): a token results in `-c http.extraheader=...` spliced
+    right after `git`, and the clone URL itself stays plain (no
+    `user:token@` embedding) — see source.py's module docstring."""
+    settings = make_settings(tmp_path)
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "clone" in cmd:
+            Path(cmd[-1]).mkdir(parents=True, exist_ok=True)
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="main\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    resolved = _clone_github(
+        "pallets", "flask", repo_id="repo1", settings=settings, github_token="ghp_faketoken1234567890"
+    )
+
+    assert resolved.source_type == "github"
+    clone_cmd = calls[0]
+    assert clone_cmd[0] == "git"
+    assert clone_cmd[1] == "-c"
+    assert clone_cmd[2].startswith("http.extraheader=AUTHORIZATION: basic ")
+    assert "https://github.com/pallets/flask.git" in clone_cmd
+    # the token itself never appears anywhere in the command line
+    assert not any("ghp_faketoken1234567890" in part for part in clone_cmd)
+
+
+def test_fresh_clone_with_token_does_not_leak_token_into_git_config(tmp_path: Path):
+    """Real git mechanics against a local `file://` remote (no network
+    call, SPEC.md §7.2): confirms the token used to authenticate a clone
+    never ends up persisted in the new clone's `.git/config`, and
+    `git remote get-url` never echoes it back either."""
+    settings = make_settings(tmp_path)
+    url, _work_dir = _make_local_remote(tmp_path)
+    dest = tmp_path / "clone"
+    fake_token = "ghp_thisIsAFakeTokenDoNotLeak123456"
+
+    _fresh_clone(dest, url, settings, github_token=fake_token)
+
+    assert (dest / "a.txt").read_text() == "v1"
+    git_config = (dest / ".git" / "config").read_text()
+    assert fake_token not in git_config
+
+    remote_url = subprocess.run(
+        ["git", "remote", "get-url", "origin"], cwd=dest, check=True, capture_output=True, text=True
+    ).stdout
+    assert fake_token not in remote_url
+
+
+def test_fresh_clone_failure_message_is_scrubbed_of_the_token(tmp_path: Path, monkeypatch):
+    """Even though the token is never embedded in a URL git would echo
+    back (see above), the failure path defensively scrubs stderr anyway —
+    this asserts that guarantee holds if stderr somehow contained it."""
+    settings = make_settings(tmp_path)
+    fake_token = "ghp_thisIsAFakeTokenDoNotLeak123456"
+
+    def fake_run(cmd, **kwargs):
+        raise subprocess.CalledProcessError(
+            128, cmd, stderr=f"fatal: authentication failed for token {fake_token}"
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(SourceError) as exc_info:
+        _fresh_clone(tmp_path / "clone", "https://github.com/pallets/flask.git", settings, fake_token)
+
+    assert fake_token not in str(exc_info.value)
+    assert "***" in str(exc_info.value)
