@@ -72,5 +72,22 @@ server {
         proxy_cache off;
         chunked_transfer_encoding off;
         proxy_read_timeout 130s;
+
+        # `proxy_buffering off` above only controls the response *body* —
+        # nginx always buffers response *headers* separately (to parse
+        # them) regardless of that setting, sized by proxy_buffer_size.
+        # Real bug found via a live Railway deployment, not by inspection:
+        # nginx's small default (4k/8k depending on platform) wasn't
+        # enough once a request passes through Railway's own edge routing
+        # in front of the backend too (BACKEND_INTERNAL_URL is the
+        # backend's public URL — see header comment), which apparently
+        # adds enough extra response header weight to overflow it —
+        # `upstream sent too big header while reading response header
+        # from upstream` in the error log. Not needed for docker-compose
+        # (backend is reached directly, no intermediate edge), but harmless
+        # there either way.
+        proxy_buffer_size 16k;
+        proxy_buffers 4 16k;
+        proxy_busy_buffers_size 16k;
     }
 }
